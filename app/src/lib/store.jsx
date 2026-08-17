@@ -146,94 +146,94 @@ export function AppProvider({ children }) {
     toastTimer.current = setTimeout(() => setToast(null), 5500)
   }, [])
 
-  /* ── cloud sync ───────────────────────────────────────────────── */
+  /* ── vault: manual, end-to-end encrypted sync ─────────────────── */
 
-  /* the loop reads from a ref so it never runs against stale state */
+  /* the sync run reads from a ref so it never works against stale state */
   useEffect(() => {
     snapshotRef.current = { sections, entries, settings }
   }, [sections, entries, settings])
 
-  /* a cheap fingerprint of local state — if it has not moved since the
-     last run there is nothing to push, and re-running would loop */
-  const lastSignature = useRef('')
-  const signatureOf = useCallback((secs, ents) => {
-    let newest = ''
-    for (const r of ents) if (r.updatedAt > newest) newest = r.updatedAt
-    for (const r of secs) if (r.updatedAt > newest) newest = r.updatedAt
-    return `${secs.length}:${ents.length}:${newest}`
+  /* Reconnect on load if a passphrase was saved on this device. Deriving
+     the key is deliberately slow (250k PBKDF2 rounds), so it happens once
+     here rather than on every sync. Nothing is sent — this only unlocks
+     the button. */
+  useEffect(() => {
+    if (!ready || !cryptoAvailable()) return
+    let alive = true
+    ;(async () => {
+      const saved = await db.getMeta('vaultPassphrase')
+      if (!saved || !alive) return
+      try {
+        const { key, id } = await derive(saved)
+        if (!alive) return
+        vaultKey.current = key
+        const at = await db.getMeta('vaultSyncedAt')
+        setVault({ connected: true, id, status: 'idle', at: at ?? null, error: null })
+      } catch (err) {
+        if (alive) setVault((v) => ({ ...v, error: err.message }))
+      }
+    })()
+    return () => { alive = false }
+  }, [ready])
+
+  const connectVault = useCallback(async (passphrase) => {
+    const pass = String(passphrase || '').trim()
+    if (pass.length < 12) throw new Error('Use a passphrase of at least 12 characters.')
+    const { key, id } = await derive(pass)
+    vaultKey.current = key
+    await db.setMeta('vaultPassphrase', pass)
+    setVault({ connected: true, id, status: 'idle', at: null, error: null })
+    return id
   }, [])
 
-  const sync = useCallback(async ({ silent = true } = {}) => {
-    const userId = session?.user?.id
-    if (!isConfigured || !userId || syncing.current || !navigator.onLine) return null
+  const disconnectVault = useCallback(async () => {
+    vaultKey.current = null
+    await db.setMeta('vaultPassphrase', null)
+    setVault({ connected: false, id: null, status: 'idle', at: null, error: null })
+    flashRef.current?.('Vault disconnected. Your data stays on this device.')
+  }, [])
+
+  /* Runs only when you press the button. There is no timer, no listener,
+     and nothing that fires on focus — that was the point. */
+  const syncNow = useCallback(async () => {
+    if (!vaultKey.current || !vault.id || syncing.current) return null
+    if (!navigator.onLine) {
+      setVault((v) => ({ ...v, status: 'error', error: 'You are offline.' }))
+      return null
+    }
 
     syncing.current = true
-    setSyncState((s) => ({ ...s, status: 'syncing', error: null }))
+    setVault((v) => ({ ...v, status: 'syncing', error: null }))
     try {
-      const cursor = await db.getMeta('syncCursor')
       const snapshot = snapshotRef.current
-      const result = await runSync({
-        userId,
+      const result = await syncVault({
+        key: vaultKey.current,
+        id: vault.id,
         sections: snapshot.sections,
         entries: snapshot.entries,
         settings: snapshot.settings,
-        cursor: cursor ?? null,
       })
 
-      await db.setMeta('syncCursor', result.cursor)
       setSections([...result.sections].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)))
       setEntries(result.entries)
       if (result.settings !== snapshot.settings) persistSettings(result.settings, { touch: false })
 
-      lastSignature.current = signatureOf(result.sections, result.entries)
-      setSyncState({ status: 'ok', at: new Date().toISOString(), error: null })
-      if (!silent) flashRef.current?.(`Synced — ${result.pushed} up, ${result.pulled} down.`)
+      const at = new Date().toISOString()
+      await db.setMeta('vaultSyncedAt', at)
+      setVault((v) => ({ ...v, status: 'ok', at, error: null }))
+      flashRef.current?.(
+        result.pulled ? `Synced — ${result.pulled} change${result.pulled === 1 ? '' : 's'} pulled in.` : 'Synced. Nothing new to pull.'
+      )
       return result
     } catch (err) {
-      console.error('Sync failed', err)
-      setSyncState({ status: 'error', at: new Date().toISOString(), error: err.message || String(err) })
-      if (!silent) flashRef.current?.(`Sync failed: ${err.message || err}`)
+      console.error('Vault sync failed', err)
+      setVault((v) => ({ ...v, status: 'error', error: err.message || String(err) }))
+      flashRef.current?.(`Sync failed: ${err.message || err}`)
       return null
     } finally {
       syncing.current = false
     }
-  }, [session, persistSettings, signatureOf])
-
-  /* auth: pick up a magic-link redirect, then follow the session */
-  useEffect(() => {
-    if (!isConfigured) return
-    let alive = true
-    ;(async () => {
-      await consumeAuthRedirect()
-      const s = await currentSession()
-      if (alive) setSession(s)
-    })()
-    const { data } = supabase.auth.onAuthStateChange((_event, s) => setSession(s))
-    return () => { alive = false; data?.subscription?.unsubscribe() }
-  }, [])
-
-  /* sync when signed in, when the tab comes back, and when the network does */
-  useEffect(() => {
-    if (!session || !ready) return
-    sync()
-    const onVisible = () => { if (document.visibilityState === 'visible') sync() }
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('online', onVisible)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('online', onVisible)
-    }
-  }, [session, ready, sync])
-
-  /* and shortly after you stop making changes */
-  useEffect(() => {
-    if (!session || !ready) return
-    const sig = signatureOf(sections, entries)
-    if (sig === lastSignature.current) return
-    clearTimeout(syncTimer.current)
-    syncTimer.current = setTimeout(() => sync(), 4000)
-    return () => clearTimeout(syncTimer.current)
-  }, [sections, entries, session, ready, sync, signatureOf])
+  }, [vault.id, persistSettings])
 
   flashRef.current = flash
 
@@ -511,18 +511,10 @@ export function AppProvider({ children }) {
     isDayClosed: (k) => (settings.closedDays || []).includes(k),
     exportJSON, importJSON, loadDemo, wipeAll,
     totalsFor, today,
-    /* cloud */
-    syncAvailable: isConfigured,
-    session,
-    syncState,
-    sync,
-    signOut: async () => {
-      await sbSignOut()
-      await db.setMeta('syncCursor', null)
-      setSession(null)
-      setSyncState({ status: 'idle', at: null, error: null })
-      flash('Signed out. Your data stays on this device.')
-    },
+    /* vault — manual, encrypted, no account */
+    vault,
+    vaultReady: cryptoAvailable(),
+    connectVault, disconnectVault, syncNow,
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

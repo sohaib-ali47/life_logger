@@ -8,7 +8,7 @@ import { Card, Button, IconButton, Sheet, Field, inputClass, Empty, slotVar } fr
 import { useApp } from '../lib/store'
 import { PRIMITIVES, BUILDABLE, PILLARS, slug } from '../lib/primitives'
 import * as notify from '../lib/notify'
-import { signInWithEmail, configError } from '../lib/supabase'
+import { passphraseHint } from '../lib/vault'
 import { today } from '../lib/dates'
 
 const blank = () => ({
@@ -287,108 +287,105 @@ export default function Setup({ navigate, query }) {
    ══════════════════════════════════════════════════════════════════════ */
 
 function SyncCard() {
-  const { syncAvailable, session, syncState, sync, signOut, flash } = useApp()
-  const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
+  const { vault, vaultReady, connectVault, disconnectVault, syncNow, flash } = useApp()
+  const [pass, setPass] = useState('')
+  const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  if (!syncAvailable) {
+  if (!vaultReady) {
     return (
       <Card title="Sync across devices" className="mb-3.5">
-        {configError ? (
-          <p className="text-[13px] text-critical">{configError}</p>
-        ) : (
-          <p className="text-[13px] text-ink-2">
-            Not configured on this build. Everything works — it just lives on this device only.
-          </p>
-        )}
-        <p className="text-[12px] text-ink-3 mt-3">
-          To switch it on, set <code className="text-ink-2">VITE_SUPABASE_URL</code> and{' '}
-          <code className="text-ink-2">VITE_SUPABASE_ANON_KEY</code>, run the migration in{' '}
-          <code className="text-ink-2">supabase/migrations</code>, and redeploy. Until then nothing leaves the phone.
+        <p className="text-[13px] text-ink-2">
+          Encryption needs a secure page. Open the app over <code className="text-ink-2">https</code> (your deployed
+          address) rather than a plain local IP, and this becomes available.
         </p>
       </Card>
     )
   }
 
-  const send = async () => {
-    if (!email.trim()) return
+  const connect = async () => {
     setBusy(true)
     try {
-      await signInWithEmail(email)
-      setSent(true)
+      await connectVault(pass)
+      setPass('')
+      flash('Vault connected. Press Sync now on each device.')
     } catch (err) {
-      flash(`Could not send the link: ${err.message}`)
+      flash(err.message)
     } finally {
       setBusy(false)
     }
   }
 
+  const hint = pass ? passphraseHint(pass) : null
+
   const statusText =
-    syncState.status === 'syncing' ? 'Syncing…'
-      : syncState.status === 'error' ? `Last attempt failed — ${syncState.error}`
-      : syncState.at ? `Last synced ${new Date(syncState.at).toLocaleTimeString()}`
-      : 'Not synced yet'
+    vault.status === 'syncing' ? 'Syncing…'
+      : vault.status === 'error' ? vault.error
+      : vault.at ? `Last synced ${new Date(vault.at).toLocaleString()}`
+      : 'Not synced yet — press Sync now'
 
   return (
     <Card title="Sync across devices" className="mb-3.5">
-      {session ? (
+      {vault.connected ? (
         <>
           <div className="flex items-center gap-3 flex-wrap">
             <span
               className="w-2 h-2 rounded-full shrink-0"
               style={{
                 background:
-                  syncState.status === 'error' ? 'var(--critical)'
-                    : syncState.status === 'syncing' ? 'var(--warning)'
+                  vault.status === 'error' ? 'var(--critical)'
+                    : vault.status === 'syncing' ? 'var(--warning)'
                     : 'var(--good)',
               }}
             />
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium truncate">{session.user.email}</div>
-              <div className="text-[11.5px] text-ink-3 truncate">{statusText}</div>
+              <div className="text-[13px] font-medium">Vault connected</div>
+              <div className={`text-[11.5px] truncate ${vault.status === 'error' ? 'text-critical' : 'text-ink-3'}`}>
+                {statusText}
+              </div>
             </div>
-            <Button size="sm" icon="refresh" onClick={() => sync({ silent: false })} disabled={syncState.status === 'syncing'}>
-              Sync now
+            <Button tone="primary" icon="refresh" onClick={syncNow} disabled={vault.status === 'syncing'}>
+              {vault.status === 'syncing' ? 'Syncing…' : 'Sync now'}
             </Button>
-            <Button size="sm" tone="ghost" onClick={signOut}>Sign out</Button>
+            <Button size="sm" tone="ghost" onClick={disconnectVault}>Disconnect</Button>
           </div>
+          <dl className="grid grid-cols-[1fr_auto] gap-y-1.5 gap-x-4 text-[12px] mt-4">
+            <dt className="text-ink-2">Vault id</dt>
+            <dd className="num text-ink-3">{vault.id?.slice(0, 12)}…</dd>
+          </dl>
           <p className="text-[12px] text-ink-3 mt-3">
-            Your phone and your laptop merge on the newest edit per record. Deletes replicate as tombstones, so removing
-            something on one device does not come back from the other. Sync runs when you open the app, when the network
-            returns, and a few seconds after you stop making changes.
+            Nothing syncs on its own. Press the button on each device — it pulls, merges on the newest edit per record,
+            and pushes back. The running timer is left alone on purpose.
           </p>
-        </>
-      ) : sent ? (
-        <>
-          <p className="text-[13px] text-ink-2">
-            Check <strong>{email}</strong> for a sign-in link. Open it on this device.
-          </p>
-          <Button size="sm" tone="ghost" className="mt-3" onClick={() => setSent(false)}>Use a different address</Button>
         </>
       ) : (
         <>
           <p className="text-[13px] text-ink-2 mb-3">
-            Sign in to keep this device and your phone in step. No password — you get a link by email.
+            Type the same passphrase here and on your phone. There is no account and no email — the passphrase is the
+            key, and the server only ever holds encrypted data it cannot read.
           </p>
           <div className="flex gap-2">
             <input
-              type="email"
-              inputMode="email"
-              autoComplete="email"
+              type={show ? 'text' : 'password'}
+              autoComplete="off"
+              spellCheck="false"
               className={inputClass}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') send() }}
-              placeholder="you@example.com"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && pass.trim().length >= 12) connect() }}
+              placeholder="four random words work well"
             />
-            <Button tone="primary" onClick={send} disabled={busy || !email.trim()}>
-              {busy ? 'Sending…' : 'Send link'}
+            <Button size="md" tone="quiet" onClick={() => setShow((v) => !v)}>{show ? 'Hide' : 'Show'}</Button>
+            <Button tone="primary" onClick={connect} disabled={busy || pass.trim().length < 12}>
+              {busy ? 'Deriving…' : 'Connect'}
             </Button>
           </div>
+          {hint && (
+            <p className={`text-[11.5px] mt-2 ${hint.ok ? 'text-ink-3' : 'text-warning'}`}>{hint.text}</p>
+          )}
           <p className="text-[12px] text-ink-3 mt-3">
-            Everything already on this device is uploaded on first sync. Nothing is shared with anyone — row-level
-            security means the database only ever returns your own rows.
+            <strong className="text-ink-2">Write the passphrase down.</strong> Nobody holds a copy, so there is no reset
+            link — lose it and whatever is in the vault is gone. Your local export stays the real backup either way.
           </p>
         </>
       )}

@@ -78,80 +78,67 @@ server, which this build does not include.
 
 ---
 
-## Cloud sync (optional)
+## Sync (optional) — a passphrase, no account
 
-Without credentials the app is local-only and says so on the Setup screen. With them you
-get email-link sign-in and last-write-wins replication between devices.
+Sync needs no third-party service, no account, no email and no API keys. It runs on a
+serverless function in your own Vercel project and stores one encrypted blob.
 
-### 1. Create the database
+**How it works.** You type the same passphrase on your phone and your laptop. From it the
+app derives two things under different salts: an AES-GCM key that never leaves the device,
+and a vault id that is all the server ever sees. So the server holds ciphertext it cannot
+read, addressed by an id that reveals nothing about the key.
 
-In a new Supabase project, open the SQL editor and run:
+**Setup, once:**
 
-```
-supabase/migrations/20260817000000_init.sql
-```
+1. Vercel dashboard → **Storage** → Create Database → **Blob**
+2. Connect it to this project, then **redeploy** (`BLOB_READ_WRITE_TOKEN` is injected
+   automatically)
+3. Open **Setup → Sync across devices**, type a passphrase of 12+ characters, press
+   Connect, then **Sync now**
+4. Do the same on the other device with the same passphrase
 
-Or with the CLI:
+**It is manual on purpose.** Nothing syncs on a timer, on focus, or when the network
+returns. You press the button; it pulls, merges and pushes.
 
-```bash
-supabase link --project-ref <your-ref>
-supabase db push
-```
+- Merging is last-write-wins per record on `updatedAt`, so an edit on either device wins
+  by recency rather than by which one synced last.
+- Deletes are tombstones, so removing something on one device does not come back from the
+  other.
+- The running timer is deliberately **not** synced — starting one on your phone should not
+  start one on your laptop.
 
-That creates `sections`, `entries` and `settings`, each with row-level security keyed to
-`auth.uid()`. There is no path that returns another user's rows.
+**Two things to be clear about:**
 
-### 2. Configure auth
+- **Lose the passphrase and the vault is unrecoverable.** There is no reset link, because
+  nobody is holding a key. Write it down.
+- If two devices push in the same moment, the later write takes the whole document. Manual
+  sync makes that very unlikely, but the local JSON export remains the real backup.
 
-Authentication → URL Configuration → set **Site URL** to your deployed origin and add it
-to **Redirect URLs**. Email provider on, "Confirm email" is not required for magic links.
-
-### 3. Set the environment variables
-
-```bash
-cp .env.example .env.local
-```
-
-```
-VITE_SUPABASE_URL=https://your-ref.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-public-key
-```
-
-Both are safe in a client bundle — the anon key is meant to be public and RLS is what
-protects the data. **Never put the `service_role` key here**; it bypasses RLS entirely.
-
-### How sync behaves
-
-- IndexedDB stays the source of truth for the UI. Sync never blocks an interaction.
-- Merging is last-write-wins per record on `updatedAt`.
-- Deletes are tombstones, so a deletion replicates instead of being undone by the other
-  device. `purge_tombstones()` clears them after 90 days — schedule it with pg_cron once
-  you have two devices running.
-- It runs on sign-in, when the tab regains focus, when the network returns, and about four
-  seconds after you stop making changes.
-- The running timer is deliberately **not** synced — starting a timer on your phone should
-  not start one on your laptop.
-- **Known limit:** last-write-wins resolves by wall clock, so two devices with badly skewed
-  clocks can let an older edit win. For one person moving between a phone and a laptop this
-  is the right trade against per-field merging or a CRDT.
+Encryption requires a secure context, so sync is available on your `https://` deployment
+and on `localhost`, but not over a plain LAN IP. `vite dev` does not run the serverless
+function either — use `vercel dev` if you need to test sync locally.
 
 ---
 
 ## Deploying
 
 ```bash
-npm i -g vercel     # already installed on this machine
-vercel              # first run links the project
 vercel --prod
 ```
 
-Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel → Settings → Environment
-Variables **before** the production build, then redeploy — Vite inlines them at build time,
-so adding them afterwards has no effect until you rebuild.
+Set the project's **Root Directory** to `app`. There are no build-time environment
+variables to configure — the only one sync uses, `BLOB_READ_WRITE_TOKEN`, is added by
+Vercel when you connect a Blob store and is read at request time by the function, not
+inlined into the bundle.
 
-`vercel.json` handles the SPA rewrite, immutable caching for hashed assets, and
-`must-revalidate` on `sw.js` and the manifest so an update is picked up on the next launch
-rather than being pinned by the service worker.
+`vercel.json` sets immutable caching for hashed assets and `must-revalidate` on `sw.js`
+and the manifest, so a new deploy is picked up on next launch instead of being pinned by
+the old service worker.
+
+**If a deploy shows a blank page**, the boot fallback in `index.html` prints the actual
+error and offers a *Clear cache and reload* button, which unregisters the service worker
+and drops its caches. That is the fix for a stale build; anything else, the error text
+names the cause.
 
 ---
 
@@ -169,15 +156,15 @@ src/
     format.js       every number's display form, in one place
     seed.js         deterministic demo history
     notify.js       Notification API, honest about the iOS limits
-    supabase.js     client, or null when unconfigured
-    sync.js         pull / merge / push
-  components/       Icon, ui kit, charts, tiles, sheets
+    vault.js        passphrase → key + id, encrypt, merge, push / pull
+  components/       Icon, ui kit, charts, tiles, sheets, ErrorBoundary
   screens/          Today, Stats, Review, SectionDetail, Setup
-supabase/migrations/
+api/
+  sync.js           the serverless locker — stores ciphertext, reads it back
 ```
 
 ## Not built yet
 
-Push notifications while the app is closed (needs a server and VAPID keys), the iOS
+Push notifications while the app is closed (needs a push server and VAPID keys), the iOS
 Shortcuts bridge for automatic screen time and Health data, tasks, and gym session
 templates.
