@@ -12,8 +12,7 @@ import { seedSections, withDefaults, SECTIONS_VERSION, DEFAULT_IDS } from './sec
 import { configure, today, dayKeyFor, localStamp } from './dates'
 import { generate } from './seed'
 import { indexEntries, totalsByDay } from './stats'
-import { supabase, isConfigured, currentSession, consumeAuthRedirect, signOut as sbSignOut } from './supabase'
-import { runSync } from './sync'
+import { derive, syncVault, cryptoAvailable } from './vault'
 
 const DEFAULT_SETTINGS = {
   theme: 'dark',
@@ -93,13 +92,12 @@ export function AppProvider({ children }) {
   const [sections, setSections] = useState([])
   const [entries, setEntries] = useState([])
   const [toast, setToast] = useState(null)
-  const [session, setSession] = useState(null)
-  const [syncState, setSyncState] = useState({ status: isConfigured ? 'idle' : 'off', at: null, error: null })
+  const [vault, setVault] = useState({ connected: false, id: null, status: 'idle', at: null, error: null })
   const lastDeleted = useRef(null)
   const toastTimer = useRef(null)
-  const syncTimer = useRef(null)
   const syncing = useRef(false)
   const flashRef = useRef(null)
+  const vaultKey = useRef(null)
   /* the sync loop reads this rather than closing over stale state */
   const snapshotRef = useRef({ sections: [], entries: [], settings: DEFAULT_SETTINGS })
 
