@@ -56,14 +56,24 @@ export function status() {
   return { level: 'ask', text: 'Notifications are off. Turn them on to get reminders while the app is open.' }
 }
 
-/* one notification per id per session — a nudge that re-renders must not
-   fire the OS notification again */
-const fired = new Set(JSON.parse(sessionStorage.getItem(KEY) || '[]'))
+/* One notification per id per session — a nudge that re-renders must not
+   fire the OS notification again. Read defensively: this runs at import
+   time, and a throw here would take the whole bundle down before React
+   ever mounts. */
+const fired = new Set(
+  (() => {
+    try {
+      return JSON.parse(globalThis.sessionStorage?.getItem(KEY) || '[]')
+    } catch {
+      return []
+    }
+  })()
+)
 
 function remember(id) {
   fired.add(id)
   try {
-    sessionStorage.setItem(KEY, JSON.stringify([...fired].slice(-200)))
+    globalThis.sessionStorage?.setItem(KEY, JSON.stringify([...fired].slice(-200)))
   } catch { /* private mode — in-memory is fine */ }
 }
 

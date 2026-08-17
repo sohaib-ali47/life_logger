@@ -9,13 +9,39 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL?.trim()
+const rawUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
-export const isConfigured = Boolean(url && anonKey)
+/* A malformed URL makes createClient throw at import time, which kills the
+   whole bundle before React mounts — a black screen with no clue why. So
+   the URL is validated first, and construction is guarded. A bad env var
+   must degrade to "no sync", never to a dead app. */
+function validUrl(value) {
+  if (!value) return null
+  try {
+    const u = new URL(value)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+    return u.origin
+  } catch {
+    return null
+  }
+}
 
-export const supabase = isConfigured
-  ? createClient(url, anonKey, {
+const url = validUrl(rawUrl)
+
+export let configError = null
+if (rawUrl && !url) {
+  configError = `VITE_SUPABASE_URL is not a valid URL ("${rawUrl}"). It should look like https://your-ref.supabase.co`
+} else if (url && !anonKey) {
+  configError = 'VITE_SUPABASE_URL is set but VITE_SUPABASE_ANON_KEY is missing.'
+} else if (!url && anonKey) {
+  configError = 'VITE_SUPABASE_ANON_KEY is set but VITE_SUPABASE_URL is missing.'
+}
+
+let client = null
+if (url && anonKey) {
+  try {
+    client = createClient(url, anonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -26,7 +52,15 @@ export const supabase = isConfigured
       },
       global: { headers: { 'x-application-name': 'life-os' } },
     })
-  : null
+  } catch (err) {
+    configError = `Supabase client could not start: ${err.message}`
+    client = null
+  }
+}
+if (configError) console.error('[life-os] sync disabled —', configError)
+
+export const supabase = client
+export const isConfigured = Boolean(client)
 
 export async function currentSession() {
   if (!supabase) return null

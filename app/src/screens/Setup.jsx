@@ -8,7 +8,7 @@ import { Card, Button, IconButton, Sheet, Field, inputClass, Empty, slotVar } fr
 import { useApp } from '../lib/store'
 import { PRIMITIVES, BUILDABLE, PILLARS, slug } from '../lib/primitives'
 import * as notify from '../lib/notify'
-import { signInWithEmail } from '../lib/supabase'
+import { signInWithEmail, configError } from '../lib/supabase'
 import { today } from '../lib/dates'
 
 const blank = () => ({
@@ -295,9 +295,13 @@ function SyncCard() {
   if (!syncAvailable) {
     return (
       <Card title="Sync across devices" className="mb-3.5">
-        <p className="text-[13px] text-ink-2">
-          Not configured on this build. Everything works — it just lives on this device only.
-        </p>
+        {configError ? (
+          <p className="text-[13px] text-critical">{configError}</p>
+        ) : (
+          <p className="text-[13px] text-ink-2">
+            Not configured on this build. Everything works — it just lives on this device only.
+          </p>
+        )}
         <p className="text-[12px] text-ink-3 mt-3">
           To switch it on, set <code className="text-ink-2">VITE_SUPABASE_URL</code> and{' '}
           <code className="text-ink-2">VITE_SUPABASE_ANON_KEY</code>, run the migration in{' '}
