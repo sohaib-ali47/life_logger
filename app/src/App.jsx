@@ -12,7 +12,7 @@ import Review from './screens/Review'
 import Setup from './screens/Setup'
 import SectionDetail from './screens/SectionDetail'
 import Auth from './screens/Auth'
-import Onboarding from './screens/Onboarding'
+import Preference from './screens/Preference'
 
 const NAV = [
   { id: 'today', label: 'Today', icon: 'calendar', path: '/today' },
@@ -91,18 +91,18 @@ function Shell() {
     return <Auth initialMode="recovery" onDone={app.clearRecovery} />
   }
 
-  /* No account and no explicit "use it locally" choice yet — ask once.
-     The app is still fully usable without one; this is a gate you can
-     walk around, not a wall. */
-  if (app.accountsEnabled && !app.session && !app.settings.guest) {
-    return <Auth notice={app.auth.notice} onGuest={app.continueAsGuest} />
+  /* Sign in first. No bypass — the session is cached, so this is asked
+     once per device and not again until you sign out. */
+  if (app.accountsEnabled && !app.session) {
+    return <Auth notice={app.auth.notice} />
   }
 
-  /* Asked once, after the account exists so it can greet you by name. On a
-     second device the answer arrives with the first sync, so this is
-     skipped rather than asked again. */
-  if (!app.settings.onboarded) {
-    return <Onboarding />
+  /* Then the one preference, if it has never been answered. Gating on the
+     answer itself rather than a "seen it" flag is what makes it reappear
+     on the next sign-in for anyone who has not set it — and vanish for
+     good the moment they do, on every device, because it syncs. */
+  if (!app.settings.sex) {
+    return <Preference />
   }
 
   return (
@@ -144,6 +144,24 @@ function Shell() {
 
       {/* ── screen ─────────────────────────────────────────────────── */}
       <main className="px-4 md:px-7 pt-5 md:pt-6 pb-28 md:pb-16 max-w-[1160px] w-full pt-safe">
+        {/* Silently skipping the login screen because an env var is absent
+            is a trap. Say so, on every screen, until it is fixed. */}
+        {!app.accountsEnabled && (
+          <div
+            className="flex items-start gap-2.5 rounded-[12px] px-3.5 py-2.5 mb-4 text-[12.5px] leading-relaxed"
+            style={{
+              background: 'color-mix(in oklab, var(--warning) 14%, transparent)',
+              color: 'var(--ink)',
+            }}
+          >
+            <Icon name="lock" size={15} className="mt-px shrink-0" />
+            <span>
+              <strong>Sign-in is off on this build.</strong> Set <code>VITE_SUPABASE_URL</code> and{' '}
+              <code>VITE_SUPABASE_ANON_KEY</code> in your host&apos;s environment variables and redeploy — Vite inlines
+              them at build time, so they must be set <em>before</em> the build. Until then this device is local-only.
+            </span>
+          </div>
+        )}
         {route.name === 'stats' && <Stats navigate={navigate} />}
         {route.name === 'review' && <Review navigate={navigate} />}
         {route.name === 'setup' && <Setup navigate={navigate} query={route.query} />}

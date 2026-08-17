@@ -272,6 +272,15 @@ export default function Setup({ navigate, query }) {
         <div className="flex flex-wrap gap-2">
           <Button icon="sparkle" onClick={() => app.loadDemo()}>Load 90 days of sample data</Button>
           <Button
+            icon="refresh"
+            onClick={async () => {
+              const n = await app.clearDemo()
+              app.flash(n ? `${n} sample entries removed.` : 'No sample data to remove.')
+            }}
+          >
+            Remove sample data
+          </Button>
+          <Button
             tone="danger"
             icon="trash"
             onClick={() => {
@@ -323,27 +332,10 @@ function SyncCard() {
     )
   }
 
-  if (!user) {
-    return (
-      <Card title="Account and sync" className="mb-3.5">
-        <p className="text-[13px] text-ink-2">
-          You are using Life OS on this device only. Nothing is uploaded and nothing syncs.
-        </p>
-        <Button
-          tone="primary"
-          icon="external"
-          className="mt-3"
-          onClick={() => setSetting('guest', false)}
-        >
-          Sign in or create an account
-        </Button>
-        <p className="text-[12px] text-ink-3 mt-3">
-          Everything already logged here uploads on the first sync — signing in adds to your history rather than
-          replacing it.
-        </p>
-      </Card>
-    )
-  }
+  /* With accounts on there is no signed-out path into the app, so this is
+     only reachable in the moment between signing out and the auth screen
+     taking over. */
+  if (!user) return null
 
   const name = user.user_metadata?.full_name
   const statusText =

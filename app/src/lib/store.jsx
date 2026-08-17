@@ -24,8 +24,9 @@ const DEFAULT_SETTINGS = {
   scoreGoal: 80,
   sectionsVersion: 0,
   autoSync: false,
-  guest: false,
-  onboarded: false,
+  /* null until answered. Gating the preference screen on this — rather than
+     on a "you have seen it" flag — is what makes it reappear next sign-in
+     for anyone who never answered, and stay gone once they have. */
   sex: null,          /* 'male' | 'female' | 'unspecified' — scopes sections */
   timer: null,
   closedDays: [],
@@ -293,10 +294,6 @@ export function AppProvider({ children }) {
     signedInFor.current = null
     flashRef.current?.('Signed out. Your data stays on this device.')
   }, [])
-
-  const continueAsGuest = useCallback(() => {
-    persistSettings({ ...snapshotRef.current.settings, guest: true })
-  }, [persistSettings])
 
   const clearRecovery = useCallback(() => setAuth((a) => ({ ...a, recovery: false })), [])
 
@@ -602,7 +599,7 @@ export function AppProvider({ children }) {
     session: auth.session,
     user: auth.session?.user ?? null,
     syncState,
-    sync, signOut, continueAsGuest, clearRecovery,
+    sync, signOut, clearRecovery,
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

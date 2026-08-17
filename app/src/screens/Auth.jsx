@@ -25,7 +25,7 @@ const MODES = {
   recovery: { title: 'Set a new password',   blurb: 'Choose something you have not used elsewhere.' },
 }
 
-export default function Auth({ initialMode = 'signin', notice, onGuest, onDone }) {
+export default function Auth({ initialMode = 'signin', notice, onDone }) {
   const [mode, setMode] = useState(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -235,24 +235,11 @@ export default function Auth({ initialMode = 'signin', notice, onGuest, onDone }
                 )}
               </div>
 
-              {onGuest && mode !== 'recovery' && (
-                <>
-                  <div className="flex items-center gap-3 my-7">
-                    <span className="h-px flex-1 bg-line" />
-                    <span className="text-[11.5px] text-ink-3">or</span>
-                    <span className="h-px flex-1 bg-line" />
-                  </div>
-                  <button
-                    onClick={onGuest}
-                    className="w-full h-11 rounded-[10px] border border-line bg-surface hover:bg-surface-3 text-[13px] font-medium transition-colors"
-                  >
-                    Use it without an account
-                  </button>
-                  <p className="text-[11.5px] text-ink-3 mt-3 leading-relaxed">
-                    Everything works offline on this device. You can create an account later and your existing history
-                    uploads on the first sync.
-                  </p>
-                </>
+              {mode !== 'recovery' && (
+                <p className="text-[11.5px] text-ink-3 mt-7 leading-relaxed">
+                  You stay signed in on this device — this is asked once, not every time you open the app. Your history
+                  is stored on the device and synced to your account so it follows you between them.
+                </p>
               )}
             </>
           )}
