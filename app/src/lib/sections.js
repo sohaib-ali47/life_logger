@@ -122,6 +122,11 @@ export const DEFAULT_SECTIONS = [
   {
     id: 'nofap', name: 'No-fap', primitive: 'abstain', icon: 'shield',
     pillar: 'discipline', slot: 7, weight: 3,
+    /* Scoped and off until asked for: `audience` hides it entirely from
+       anyone it does not apply to, and `archived` keeps it off the Today
+       screen until you switch it on in Setup. */
+    audience: 'male',
+    archived: true,
     target: { period: 'streak', value: 30, dir: 'atLeast' },
     followUp: {
       when: 'reset',
@@ -237,7 +242,7 @@ export const DEFAULT_SECTIONS = [
 
 /* Bump when the shipped defaults change shape. Boot then refreshes the
    built-in sections while leaving anything you created yourself alone. */
-export const SECTIONS_VERSION = 2
+export const SECTIONS_VERSION = 3
 
 export const DEFAULT_IDS = new Set(DEFAULT_SECTIONS.map((s) => s.id))
 
@@ -250,9 +255,22 @@ export function withDefaults(section, index = 0) {
     weight: 1,
     archived: false,
     countsToDay: false,
+    audience: 'all',
     order: index,
     ...section,
   }
 }
+
+/* Some sections only apply to some people. A section scoped to an audience
+   is not merely hidden from the Today screen — it never appears in Setup
+   either, so it is not something to opt out of. */
+export const suitsAudience = (section, sex) =>
+  !section.audience || section.audience === 'all' || section.audience === sex
+
+export const AUDIENCES = [
+  { id: 'male', label: 'Man' },
+  { id: 'female', label: 'Woman' },
+  { id: 'unspecified', label: 'Prefer not to say' },
+]
 
 export const seedSections = () => DEFAULT_SECTIONS.map(withDefaults)

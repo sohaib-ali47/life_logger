@@ -11,6 +11,8 @@ import Stats from './screens/Stats'
 import Review from './screens/Review'
 import Setup from './screens/Setup'
 import SectionDetail from './screens/SectionDetail'
+import Auth from './screens/Auth'
+import Onboarding from './screens/Onboarding'
 
 const NAV = [
   { id: 'today', label: 'Today', icon: 'calendar', path: '/today' },
@@ -70,7 +72,7 @@ function Shell() {
 
   /* the context is briefly null while the provider remounts on a hot
      reload — render nothing rather than crashing the whole shell */
-  if (!app?.ready) {
+  if (!app?.ready || (app.accountsEnabled && !app.auth.ready) || app.bootstrapping) {
     return (
       <div className="min-h-full grid place-items-center text-ink-3 text-[13px]">
         <div className="grid gap-3 justify-items-center">
@@ -81,6 +83,26 @@ function Shell() {
         </div>
       </div>
     )
+  }
+
+  /* A recovery link signs you in with the sole purpose of setting a new
+     password, so it takes precedence over everything else. */
+  if (app.accountsEnabled && app.auth.recovery) {
+    return <Auth initialMode="recovery" onDone={app.clearRecovery} />
+  }
+
+  /* No account and no explicit "use it locally" choice yet — ask once.
+     The app is still fully usable without one; this is a gate you can
+     walk around, not a wall. */
+  if (app.accountsEnabled && !app.session && !app.settings.guest) {
+    return <Auth notice={app.auth.notice} onGuest={app.continueAsGuest} />
+  }
+
+  /* Asked once, after the account exists so it can greet you by name. On a
+     second device the answer arrives with the first sync, so this is
+     skipped rather than asked again. */
+  if (!app.settings.onboarded) {
+    return <Onboarding />
   }
 
   return (

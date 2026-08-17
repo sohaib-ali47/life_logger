@@ -78,45 +78,69 @@ server, which this build does not include.
 
 ---
 
-## Sync (optional) — a passphrase, no account
+## Accounts and sync (optional)
 
-Sync needs no third-party service, no account, no email and no API keys. It runs on a
-serverless function in your own Vercel project and stores one encrypted blob.
+Real accounts, email and password, with each user's rows isolated by row-level security.
+Without credentials configured the app is local-only and says so on the Setup screen.
 
-**How it works.** You type the same passphrase on your phone and your laptop. From it the
-app derives two things under different salts: an AES-GCM key that never leaves the device,
-and a vault id that is all the server ever sees. So the server holds ciphertext it cannot
-read, addressed by an id that reveals nothing about the key.
+### 1. Create the database
 
-**Setup, once:**
+In a new Supabase project, open the SQL editor and run:
 
-1. Vercel dashboard → **Storage** → Create Database → **Blob**
-2. Connect it to this project, then **redeploy** (`BLOB_READ_WRITE_TOKEN` is injected
-   automatically)
-3. Open **Setup → Sync across devices**, type a passphrase of 12+ characters, press
-   Connect, then **Sync now**
-4. Do the same on the other device with the same passphrase
+```
+supabase/migrations/20260817000000_init.sql
+```
 
-**It is manual on purpose.** Nothing syncs on a timer, on focus, or when the network
-returns. You press the button; it pulls, merges and pushes.
+That creates `profiles`, `sections`, `entries` and `settings`, RLS on all four keyed to
+`auth.uid()`, and a trigger that creates a profile row on sign-up. There is no path that
+returns another user's rows.
 
-- Merging is last-write-wins per record on `updatedAt`, so an edit on either device wins
-  by recency rather than by which one synced last.
-- Deletes are tombstones, so removing something on one device does not come back from the
-  other.
-- The running timer is deliberately **not** synced — starting one on your phone should not
-  start one on your laptop.
+### 2. Configure auth
 
-**Two things to be clear about:**
+**Authentication → URL Configuration** — set **Site URL** to your deployed origin and add
+it to **Redirect URLs**. Every email the app sends (confirmation, magic link, password
+reset) comes back to that origin, so a mismatch here is the usual cause of a link that
+lands on an error page.
 
-- **Lose the passphrase and the vault is unrecoverable.** There is no reset link, because
-  nobody is holding a key. Write it down.
-- If two devices push in the same moment, the later write takes the whole document. Manual
-  sync makes that very unlikely, but the local JSON export remains the real backup.
+Supabase's built-in email sender is rate-limited to a handful per hour, which is fine for
+you and your own devices. Add SMTP under **Project Settings → Auth** before letting other
+people sign up.
 
-Encryption requires a secure context, so sync is available on your `https://` deployment
-and on `localhost`, but not over a plain LAN IP. `vite dev` does not run the serverless
-function either — use `vercel dev` if you need to test sync locally.
+### 3. Set the environment variables
+
+```bash
+cp .env.example .env.local
+```
+
+```
+VITE_SUPABASE_URL=https://your-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-public-key
+```
+
+Both are safe in a client bundle — the anon key is meant to be public and RLS is what
+protects the data. **Never put the `service_role` key here.** Set the same two in Vercel
+before the production build; Vite inlines them at build time, so adding them afterwards
+does nothing until you rebuild.
+
+### How sync behaves
+
+- IndexedDB stays the source of truth for the UI. Sync never blocks an interaction.
+- Merging is last-write-wins per record on `updatedAt`. Deletes are tombstones, so a
+  deletion replicates instead of being undone by the other device.
+- It runs **once on sign-in**, and otherwise only when you press **Sync now**. Background
+  syncing is a checkbox in Setup, off by default.
+- The running timer is deliberately **not** synced.
+- **Known limit:** last-write-wins resolves by wall clock, so two devices with badly
+  skewed clocks can let an older edit win. For one person across a phone and a laptop
+  that is the right trade against per-field merging or a CRDT.
+
+<details>
+<summary>Previous approach — a passphrase and no account</summary>
+
+An earlier version synced through a Vercel serverless function with a passphrase-derived
+AES-GCM key and no accounts at all. It is in the git history if you ever want it back;
+`api/sync.js` and `src/lib/vault.js` were the two files.
+</details>
 
 ---
 
@@ -126,10 +150,14 @@ function either — use `vercel dev` if you need to test sync locally.
 vercel --prod
 ```
 
-Set the project's **Root Directory** to `app`. There are no build-time environment
-variables to configure — the only one sync uses, `BLOB_READ_WRITE_TOKEN`, is added by
-Vercel when you connect a Blob store and is read at request time by the function, not
-inlined into the bundle.
+Set the project's **Root Directory** to `app`, and set `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` in Settings → Environment Variables **before** the build. Vite
+inlines them, so adding them after a deploy has no effect until you rebuild.
+
+Vercel builds from Git, so a `vercel --prod` on an uncommitted working tree deploys the
+last **pushed** commit, not what is on your disk. If a fix does not appear, check that the
+bundle filename in `dist/assets/` changed — an identical hash means the same source was
+built again.
 
 `vercel.json` sets immutable caching for hashed assets and `must-revalidate` on `sw.js`
 and the manifest, so a new deploy is picked up on next launch instead of being pinned by
@@ -156,11 +184,12 @@ src/
     format.js       every number's display form, in one place
     seed.js         deterministic demo history
     notify.js       Notification API, honest about the iOS limits
-    vault.js        passphrase → key + id, encrypt, merge, push / pull
+    supabase.js     client, auth, validation — null when unconfigured
+    sync.js         pull / merge / push, last-write-wins per record
   components/       Icon, ui kit, charts, tiles, sheets, ErrorBoundary
-  screens/          Today, Stats, Review, SectionDetail, Setup
-api/
-  sync.js           the serverless locker — stores ciphertext, reads it back
+  screens/          Auth, Today, Stats, Review, SectionDetail, Setup
+supabase/migrations/
+  20260817000000_init.sql   tables, RLS, profile trigger
 ```
 
 ## Not built yet

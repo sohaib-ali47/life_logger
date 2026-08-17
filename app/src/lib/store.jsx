@@ -8,19 +8,25 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import * as db from './db'
-import { seedSections, withDefaults, SECTIONS_VERSION, DEFAULT_IDS } from './sections'
+import { seedSections, withDefaults, SECTIONS_VERSION, DEFAULT_IDS, suitsAudience } from './sections'
 import { configure, today, dayKeyFor, localStamp } from './dates'
 import { generate } from './seed'
 import { indexEntries, totalsByDay } from './stats'
-import { derive, syncVault, cryptoAvailable } from './vault'
+import {
+  isConfigured, currentSession, onAuthChange, consumeAuthRedirect, signOut as authSignOut,
+} from './supabase'
+import { runSync } from './sync'
 
 const DEFAULT_SETTINGS = {
   theme: 'dark',
   dayBoundaryHour: 4,
   weekStartsMonday: true,
   scoreGoal: 80,
-  seeded: false,
   sectionsVersion: 0,
+  autoSync: false,
+  guest: false,
+  onboarded: false,
+  sex: null,          /* 'male' | 'female' | 'unspecified' — scopes sections */
   timer: null,
   closedDays: [],
 }
@@ -70,11 +76,10 @@ function bootOnce() {
       settingsDirty = true
     }
 
-    /* first open: seed a demo history so nothing is an empty state */
-    if (!s.seeded && !ents.length) {
-      ents = generate(90)
-      await db.putMany(db.STORES.entries, ents)
-      s.seeded = true
+    /* Nothing is seeded automatically any more. A new account opens on a
+       genuinely empty app — the sample history is a button in Setup, and
+       demo entries are never uploaded. */
+    if (s.sectionsVersion !== SECTIONS_VERSION) {
       s.sectionsVersion = SECTIONS_VERSION
       settingsDirty = true
     }
@@ -92,12 +97,13 @@ export function AppProvider({ children }) {
   const [sections, setSections] = useState([])
   const [entries, setEntries] = useState([])
   const [toast, setToast] = useState(null)
-  const [vault, setVault] = useState({ connected: false, id: null, status: 'idle', at: null, error: null })
+  const [auth, setAuth] = useState({ ready: !isConfigured, session: null, recovery: false, notice: null })
+  const [syncState, setSyncState] = useState({ status: 'idle', at: null, error: null })
   const lastDeleted = useRef(null)
   const toastTimer = useRef(null)
+  const syncTimer = useRef(null)
   const syncing = useRef(false)
   const flashRef = useRef(null)
-  const vaultKey = useRef(null)
   /* the sync loop reads this rather than closing over stale state */
   const snapshotRef = useRef({ sections: [], entries: [], settings: DEFAULT_SETTINGS })
 
@@ -146,94 +152,153 @@ export function AppProvider({ children }) {
     toastTimer.current = setTimeout(() => setToast(null), 5500)
   }, [])
 
-  /* ── vault: manual, end-to-end encrypted sync ─────────────────── */
+  /* ── accounts and sync ────────────────────────────────────────── */
 
   /* the sync run reads from a ref so it never works against stale state */
   useEffect(() => {
     snapshotRef.current = { sections, entries, settings }
   }, [sections, entries, settings])
 
-  /* Reconnect on load if a passphrase was saved on this device. Deriving
-     the key is deliberately slow (250k PBKDF2 rounds), so it happens once
-     here rather than on every sync. Nothing is sent — this only unlocks
-     the button. */
+  /* Pick up a confirmation, magic link or recovery redirect, then follow
+     the session for the rest of the app's life. */
   useEffect(() => {
-    if (!ready || !cryptoAvailable()) return
+    if (!isConfigured) return
     let alive = true
     ;(async () => {
-      const saved = await db.getMeta('vaultPassphrase')
-      if (!saved || !alive) return
-      try {
-        const { key, id } = await derive(saved)
-        if (!alive) return
-        vaultKey.current = key
-        const at = await db.getMeta('vaultSyncedAt')
-        setVault({ connected: true, id, status: 'idle', at: at ?? null, error: null })
-      } catch (err) {
-        if (alive) setVault((v) => ({ ...v, error: err.message }))
-      }
+      const redirect = await consumeAuthRedirect()
+      const session = await currentSession()
+      if (!alive) return
+      setAuth({
+        ready: true,
+        session,
+        recovery: !!redirect.recovery,
+        notice: redirect.error ?? null,
+      })
     })()
-    return () => { alive = false }
-  }, [ready])
 
-  const connectVault = useCallback(async (passphrase) => {
-    const pass = String(passphrase || '').trim()
-    if (pass.length < 12) throw new Error('Use a passphrase of at least 12 characters.')
-    const { key, id } = await derive(pass)
-    vaultKey.current = key
-    await db.setMeta('vaultPassphrase', pass)
-    setVault({ connected: true, id, status: 'idle', at: null, error: null })
-    return id
+    const stop = onAuthChange((event, session) => {
+      if (!alive) return
+      setAuth((a) => ({
+        ...a,
+        ready: true,
+        session,
+        recovery: event === 'PASSWORD_RECOVERY' ? true : a.recovery,
+        notice: null,
+      }))
+      if (event === 'SIGNED_OUT') setSyncState({ status: 'idle', at: null, error: null })
+    })
+    return () => { alive = false; stop() }
   }, [])
 
-  const disconnectVault = useCallback(async () => {
-    vaultKey.current = null
-    await db.setMeta('vaultPassphrase', null)
-    setVault({ connected: false, id: null, status: 'idle', at: null, error: null })
-    flashRef.current?.('Vault disconnected. Your data stays on this device.')
-  }, [])
-
-  /* Runs only when you press the button. There is no timer, no listener,
-     and nothing that fires on focus — that was the point. */
-  const syncNow = useCallback(async () => {
-    if (!vaultKey.current || !vault.id || syncing.current) return null
+  const sync = useCallback(async ({ silent = false } = {}) => {
+    const userId = auth.session?.user?.id
+    if (!isConfigured || !userId || syncing.current) return null
     if (!navigator.onLine) {
-      setVault((v) => ({ ...v, status: 'error', error: 'You are offline.' }))
+      setSyncState((s) => ({ ...s, status: 'error', error: 'You are offline.' }))
       return null
     }
 
     syncing.current = true
-    setVault((v) => ({ ...v, status: 'syncing', error: null }))
+    setSyncState((s) => ({ ...s, status: 'syncing', error: null }))
     try {
+      const cursor = await db.getMeta('syncCursor')
       const snapshot = snapshotRef.current
-      const result = await syncVault({
-        key: vaultKey.current,
-        id: vault.id,
+      const result = await runSync({
+        userId,
         sections: snapshot.sections,
         entries: snapshot.entries,
         settings: snapshot.settings,
+        cursor: cursor ?? null,
       })
 
+      await db.setMeta('syncCursor', result.cursor)
       setSections([...result.sections].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)))
       setEntries(result.entries)
       if (result.settings !== snapshot.settings) persistSettings(result.settings, { touch: false })
 
       const at = new Date().toISOString()
-      await db.setMeta('vaultSyncedAt', at)
-      setVault((v) => ({ ...v, status: 'ok', at, error: null }))
-      flashRef.current?.(
-        result.pulled ? `Synced — ${result.pulled} change${result.pulled === 1 ? '' : 's'} pulled in.` : 'Synced. Nothing new to pull.'
-      )
+      setSyncState({ status: 'ok', at, error: null })
+      if (!silent) {
+        flashRef.current?.(
+          result.pulled || result.pushed
+            ? `Synced — ${result.pushed} up, ${result.pulled} down.`
+            : 'Synced. Nothing to change.'
+        )
+      }
       return result
     } catch (err) {
-      console.error('Vault sync failed', err)
-      setVault((v) => ({ ...v, status: 'error', error: err.message || String(err) }))
-      flashRef.current?.(`Sync failed: ${err.message || err}`)
+      console.error('Sync failed', err)
+      setSyncState({ status: 'error', at: new Date().toISOString(), error: err.message || String(err) })
+      if (!silent) flashRef.current?.(`Sync failed: ${err.message || err}`)
       return null
     } finally {
       syncing.current = false
     }
-  }, [vault.id, persistSettings])
+  }, [auth.session, persistSettings])
+
+  /* One sync on sign-in, because arriving on a new device to an empty app
+     would be absurd. Everything beyond that is opt-in.
+     Demo entries are cleared first: they were never uploaded, and a real
+     account should not open onto somebody else's fictional history. */
+  const signedInFor = useRef(null)
+  const [bootstrapping, setBootstrapping] = useState(false)
+
+  useEffect(() => {
+    const uid = auth.session?.user?.id
+    if (!ready || !uid || signedInFor.current === uid) return
+    signedInFor.current = uid
+
+    let alive = true
+    ;(async () => {
+      const snapshot = snapshotRef.current
+      const demoOnly = snapshot.entries.length > 0 && snapshot.entries.every((e) => e.source === 'demo')
+      if (demoOnly) {
+        await db.clear(db.STORES.entries)
+        if (!alive) return
+        setEntries([])
+        snapshotRef.current = { ...snapshotRef.current, entries: [] }
+      }
+      const fresh = !(await db.getMeta('syncCursor'))
+      if (fresh && alive) setBootstrapping(true)
+      await sync({ silent: true })
+      if (alive) setBootstrapping(false)
+    })()
+    return () => { alive = false }
+  }, [ready, auth.session, sync])
+
+  /* Background syncing is off by default — you asked for nothing happening
+     behind your back. Turn it on in Setup and it also runs on focus, on
+     reconnect, and a few seconds after you stop editing. */
+  useEffect(() => {
+    if (!settings.autoSync || !auth.session || !ready) return
+    const run = () => { if (document.visibilityState === 'visible') sync({ silent: true }) }
+    document.addEventListener('visibilitychange', run)
+    window.addEventListener('online', run)
+    return () => {
+      document.removeEventListener('visibilitychange', run)
+      window.removeEventListener('online', run)
+    }
+  }, [settings.autoSync, auth.session, ready, sync])
+
+  useEffect(() => {
+    if (!settings.autoSync || !auth.session || !ready) return
+    clearTimeout(syncTimer.current)
+    syncTimer.current = setTimeout(() => sync({ silent: true }), 5000)
+    return () => clearTimeout(syncTimer.current)
+  }, [sections, entries, settings.autoSync, auth.session, ready, sync])
+
+  const signOut = useCallback(async () => {
+    await authSignOut()
+    await db.setMeta('syncCursor', null)
+    signedInFor.current = null
+    flashRef.current?.('Signed out. Your data stays on this device.')
+  }, [])
+
+  const continueAsGuest = useCallback(() => {
+    persistSettings({ ...snapshotRef.current.settings, guest: true })
+  }, [persistSettings])
+
+  const clearRecovery = useCallback(() => setAuth((a) => ({ ...a, recovery: false })), [])
 
   flashRef.current = flash
 
@@ -474,13 +539,25 @@ export function AppProvider({ children }) {
     return raw.entries.length
   }, [entries])
 
-  const loadDemo = useCallback(async () => {
+  const loadDemo = useCallback(async ({ silent = false } = {}) => {
     const next = generate(90)
     await db.clear(db.STORES.entries)
     await db.putMany(db.STORES.entries, next)
     setEntries(next)
-    flash(`${next.length} demo entries loaded across 90 days.`)
+    if (!silent) flash(`${next.length} sample entries loaded across 90 days. They never leave this device.`)
   }, [flash])
+
+  /* Drop sample entries without touching anything you actually logged.
+     "Start empty" has to mean empty even on a device that was demoing. */
+  const clearDemo = useCallback(async () => {
+    const keep = snapshotRef.current.entries.filter((e) => e.source !== 'demo')
+    if (keep.length === snapshotRef.current.entries.length) return 0
+    const removed = snapshotRef.current.entries.length - keep.length
+    await db.clear(db.STORES.entries)
+    if (keep.length) await db.putMany(db.STORES.entries, keep)
+    setEntries(keep)
+    return removed
+  }, [])
 
   const wipeAll = useCallback(async () => {
     await db.wipe()
@@ -495,26 +572,37 @@ export function AppProvider({ children }) {
   }, [settings.theme, flash])
 
   /* ── derived ──────────────────────────────────────────────────── */
-  const active = useMemo(() => sections.filter((s) => !s.archived), [sections])
+
+  /* `visible` is everything that applies to you, archived or not — what
+     Setup lists. `active` is what is actually on the Today screen. */
+  const visible = useMemo(
+    () => sections.filter((s) => suitsAudience(s, settings.sex)),
+    [sections, settings.sex]
+  )
+  const active = useMemo(() => visible.filter((s) => !s.archived), [visible])
   const live = useMemo(() => entries.filter((e) => !e.deletedAt), [entries])
   const idx = useMemo(() => indexEntries(entries), [entries])
 
   const totalsFor = useCallback((keys) => totalsByDay(active, idx, keys), [active, idx])
 
   const value = {
-    ready, settings, sections, active, entries: live, allEntries: entries, idx, toast,
+    ready, settings, sections, visible, active, entries: live, allEntries: entries, idx, toast,
+    bootstrapping,
     setSetting: (k, v) => persistSettings({ ...settings, [k]: v }),
     persistSettings, flash, dismissToast: () => setToast(null),
     addEntry, updateEntry, deleteEntry, undoDelete, setEntryMeta,
     saveSection, archiveSection, createSection, addVariant, removeVariant, addExercise, freeSlot,
     startTimer, stopTimer, setDayClosed,
     isDayClosed: (k) => (settings.closedDays || []).includes(k),
-    exportJSON, importJSON, loadDemo, wipeAll,
+    exportJSON, importJSON, loadDemo, clearDemo, wipeAll,
     totalsFor, today,
-    /* vault — manual, encrypted, no account */
-    vault,
-    vaultReady: cryptoAvailable(),
-    connectVault, disconnectVault, syncNow,
+    /* accounts and sync */
+    accountsEnabled: isConfigured,
+    auth,
+    session: auth.session,
+    user: auth.session?.user ?? null,
+    syncState,
+    sync, signOut, continueAsGuest, clearRecovery,
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

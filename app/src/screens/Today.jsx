@@ -72,6 +72,7 @@ export default function Today({ dayKey, navigate }) {
 
   const score = useMemo(() => dailyScore(active, totals, entries, key), [active, totals, entries, key])
   const accounted = accountedMinutes(active, totals)
+  const noHistory = entries.length === 0
 
   const nudges = useMemo(
     () =>
@@ -228,7 +229,35 @@ export default function Today({ dayKey, navigate }) {
         </div>
       </header>
 
-      {/* ── score ──────────────────────────────────────────────────── */}
+      {/* ── first run: a score of zero is a bad first impression, and two
+             empty charts are worse. Say what to do instead. ─────────── */}
+      {noHistory ? (
+        <Card className="mb-3.5">
+          <div className="flex gap-4 items-start">
+            <span
+              className="w-10 h-10 rounded-[13px] grid place-items-center shrink-0"
+              style={{ background: 'color-mix(in oklab, var(--accent) 15%, transparent)', color: 'var(--accent)' }}
+            >
+              <Icon name="sparkle" size={19} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-semibold tracking-tight">Nothing logged yet</h2>
+              <p className="text-[13px] text-ink-2 mt-1.5 leading-relaxed max-w-[52ch]">
+                Tap anything below to start — a glass of water, last night&apos;s sleep, a timer on whatever you are
+                doing right now. The charts and the score appear as soon as there is something to draw.
+              </p>
+              <div className="flex flex-wrap gap-2 mt-3.5">
+                <Button size="sm" icon="plus" onClick={() => setLogSheet({ open: true, sectionId: null })}>
+                  Log something
+                </Button>
+                <Button size="sm" tone="ghost" icon="settings" onClick={() => navigate('/setup')}>
+                  Add your own trackers
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      ) : (
       <Card className="mb-3.5">
         <div className="flex items-center gap-5 flex-wrap">
           <Ring value={score.score / 100} size={92} stroke={7} tint="var(--accent)">
@@ -254,6 +283,7 @@ export default function Today({ dayKey, navigate }) {
           </div>
         </div>
       </Card>
+      )}
 
       {/* ── nudges ─────────────────────────────────────────────────── */}
       {nudges.length > 0 && (
@@ -332,6 +362,8 @@ export default function Today({ dayKey, navigate }) {
       })}
 
       {/* ── day shape ──────────────────────────────────────────────── */}
+      {!noHistory && (
+      <>
       <h2 className="text-[11.5px] uppercase tracking-[.07em] text-ink-3 font-semibold mt-6 mb-2.5">
         The shape of the day
       </h2>
@@ -358,6 +390,8 @@ export default function Today({ dayKey, navigate }) {
           {({ width, showTable }) => <Composition width={width} showTable={showTable} parts={parts} />}
         </ChartCard>
       </div>
+      </>
+      )}
 
       {/* ── entries ────────────────────────────────────────────────── */}
       <h2 className="text-[11.5px] uppercase tracking-[.07em] text-ink-3 font-semibold mt-6 mb-2.5">Entries</h2>

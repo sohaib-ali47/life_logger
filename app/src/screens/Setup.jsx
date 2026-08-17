@@ -7,8 +7,9 @@ import Icon, { ICON_NAMES } from '../components/Icon'
 import { Card, Button, IconButton, Sheet, Field, inputClass, Empty, slotVar } from '../components/ui'
 import { useApp } from '../lib/store'
 import { PRIMITIVES, BUILDABLE, PILLARS, slug } from '../lib/primitives'
+import { AUDIENCES } from '../lib/sections'
 import * as notify from '../lib/notify'
-import { passphraseHint } from '../lib/vault'
+import { configError } from '../lib/supabase'
 import { today } from '../lib/dates'
 
 const blank = () => ({
@@ -44,7 +45,7 @@ const textToQuick = (text) =>
 
 export default function Setup({ navigate, query }) {
   const app = useApp()
-  const { sections, active, entries, settings, saveSection, archiveSection } = app
+  const { sections, visible, active, entries, settings, saveSection, archiveSection } = app
   const [editing, setEditing] = useState(null)
   const [perm, setPerm] = useState(notify.status())
   const fileRef = useRef(null)
@@ -147,7 +148,7 @@ export default function Setup({ navigate, query }) {
         className="mb-3.5"
       >
         {PILLARS.map((p) => {
-          const items = sections.filter((s) => s.pillar === p.id)
+          const items = visible.filter((s) => s.pillar === p.id)
           if (!items.length) return null
           return (
             <div key={p.id} className="mb-3 last:mb-0">
@@ -231,6 +232,18 @@ export default function Setup({ navigate, query }) {
               onChange={(e) => app.setSetting('scoreGoal', Number(e.target.value) || 80)}
             />
           </Field>
+          <Field
+            label="Which applies to you"
+            hint="Only decides which audience-specific trackers you are offered."
+          >
+            <select
+              className={inputClass}
+              value={settings.sex ?? 'unspecified'}
+              onChange={(e) => app.setSetting('sex', e.target.value)}
+            >
+              {AUDIENCES.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            </select>
+          </Field>
         </div>
       </Card>
 
@@ -255,9 +268,9 @@ export default function Setup({ navigate, query }) {
         <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" />
       </Card>
 
-      <Card title="Demo data">
+      <Card title="Sample data">
         <div className="flex flex-wrap gap-2">
-          <Button icon="sparkle" onClick={app.loadDemo}>Load 90 days of demo data</Button>
+          <Button icon="sparkle" onClick={() => app.loadDemo()}>Load 90 days of sample data</Button>
           <Button
             tone="danger"
             icon="trash"
@@ -269,7 +282,8 @@ export default function Setup({ navigate, query }) {
           </Button>
         </div>
         <p className="text-[12px] text-ink-3 mt-3.5">
-          Demo data replaces what is there. It exists so you can judge the charts before committing real days to them.
+          Sample data replaces whatever is there, and is never uploaded to your account — it exists so you can judge
+          the charts before committing real days to them.
         </p>
       </Card>
 
@@ -287,108 +301,111 @@ export default function Setup({ navigate, query }) {
    ══════════════════════════════════════════════════════════════════════ */
 
 function SyncCard() {
-  const { vault, vaultReady, connectVault, disconnectVault, syncNow, flash } = useApp()
-  const [pass, setPass] = useState('')
-  const [show, setShow] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const app = useApp()
+  const { accountsEnabled, user, syncState, sync, signOut, settings, setSetting } = app
 
-  if (!vaultReady) {
+  if (!accountsEnabled) {
     return (
-      <Card title="Sync across devices" className="mb-3.5">
-        <p className="text-[13px] text-ink-2">
-          Encryption needs a secure page. Open the app over <code className="text-ink-2">https</code> (your deployed
-          address) rather than a plain local IP, and this becomes available.
+      <Card title="Account and sync" className="mb-3.5">
+        {configError ? (
+          <p className="text-[13px] text-critical">{configError}</p>
+        ) : (
+          <p className="text-[13px] text-ink-2">
+            Accounts are not configured on this build. Everything works — it just lives on this device only.
+          </p>
+        )}
+        <p className="text-[12px] text-ink-3 mt-3">
+          To switch them on, run <code className="text-ink-2">supabase/migrations</code> against a Supabase project, set{' '}
+          <code className="text-ink-2">VITE_SUPABASE_URL</code> and <code className="text-ink-2">VITE_SUPABASE_ANON_KEY</code>,
+          and redeploy.
         </p>
       </Card>
     )
   }
 
-  const connect = async () => {
-    setBusy(true)
-    try {
-      await connectVault(pass)
-      setPass('')
-      flash('Vault connected. Press Sync now on each device.')
-    } catch (err) {
-      flash(err.message)
-    } finally {
-      setBusy(false)
-    }
+  if (!user) {
+    return (
+      <Card title="Account and sync" className="mb-3.5">
+        <p className="text-[13px] text-ink-2">
+          You are using Life OS on this device only. Nothing is uploaded and nothing syncs.
+        </p>
+        <Button
+          tone="primary"
+          icon="external"
+          className="mt-3"
+          onClick={() => setSetting('guest', false)}
+        >
+          Sign in or create an account
+        </Button>
+        <p className="text-[12px] text-ink-3 mt-3">
+          Everything already logged here uploads on the first sync — signing in adds to your history rather than
+          replacing it.
+        </p>
+      </Card>
+    )
   }
 
-  const hint = pass ? passphraseHint(pass) : null
-
+  const name = user.user_metadata?.full_name
   const statusText =
-    vault.status === 'syncing' ? 'Syncing…'
-      : vault.status === 'error' ? vault.error
-      : vault.at ? `Last synced ${new Date(vault.at).toLocaleString()}`
-      : 'Not synced yet — press Sync now'
+    syncState.status === 'syncing' ? 'Syncing…'
+      : syncState.status === 'error' ? syncState.error
+      : syncState.at ? `Last synced ${new Date(syncState.at).toLocaleString()}`
+      : 'Not synced yet'
 
   return (
-    <Card title="Sync across devices" className="mb-3.5">
-      {vault.connected ? (
-        <>
-          <div className="flex items-center gap-3 flex-wrap">
+    <Card title="Account and sync" className="mb-3.5">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span
+          className="w-9 h-9 rounded-full grid place-items-center shrink-0 text-[13px] font-semibold"
+          style={{ background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)' }}
+        >
+          {(name || user.email || '?').slice(0, 1).toUpperCase()}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium truncate">{name || user.email}</div>
+          <div className="flex items-center gap-1.5 min-w-0">
             <span
-              className="w-2 h-2 rounded-full shrink-0"
+              className="w-1.5 h-1.5 rounded-full shrink-0"
               style={{
                 background:
-                  vault.status === 'error' ? 'var(--critical)'
-                    : vault.status === 'syncing' ? 'var(--warning)'
+                  syncState.status === 'error' ? 'var(--critical)'
+                    : syncState.status === 'syncing' ? 'var(--warning)'
                     : 'var(--good)',
               }}
             />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium">Vault connected</div>
-              <div className={`text-[11.5px] truncate ${vault.status === 'error' ? 'text-critical' : 'text-ink-3'}`}>
-                {statusText}
-              </div>
-            </div>
-            <Button tone="primary" icon="refresh" onClick={syncNow} disabled={vault.status === 'syncing'}>
-              {vault.status === 'syncing' ? 'Syncing…' : 'Sync now'}
-            </Button>
-            <Button size="sm" tone="ghost" onClick={disconnectVault}>Disconnect</Button>
+            <span className={`text-[11.5px] truncate ${syncState.status === 'error' ? 'text-critical' : 'text-ink-3'}`}>
+              {statusText}
+            </span>
           </div>
-          <dl className="grid grid-cols-[1fr_auto] gap-y-1.5 gap-x-4 text-[12px] mt-4">
-            <dt className="text-ink-2">Vault id</dt>
-            <dd className="num text-ink-3">{vault.id?.slice(0, 12)}…</dd>
-          </dl>
-          <p className="text-[12px] text-ink-3 mt-3">
-            Nothing syncs on its own. Press the button on each device — it pulls, merges on the newest edit per record,
-            and pushes back. The running timer is left alone on purpose.
-          </p>
-        </>
-      ) : (
-        <>
-          <p className="text-[13px] text-ink-2 mb-3">
-            Type the same passphrase here and on your phone. There is no account and no email — the passphrase is the
-            key, and the server only ever holds encrypted data it cannot read.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type={show ? 'text' : 'password'}
-              autoComplete="off"
-              spellCheck="false"
-              className={inputClass}
-              value={pass}
-              onChange={(e) => setPass(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && pass.trim().length >= 12) connect() }}
-              placeholder="four random words work well"
-            />
-            <Button size="md" tone="quiet" onClick={() => setShow((v) => !v)}>{show ? 'Hide' : 'Show'}</Button>
-            <Button tone="primary" onClick={connect} disabled={busy || pass.trim().length < 12}>
-              {busy ? 'Deriving…' : 'Connect'}
-            </Button>
-          </div>
-          {hint && (
-            <p className={`text-[11.5px] mt-2 ${hint.ok ? 'text-ink-3' : 'text-warning'}`}>{hint.text}</p>
-          )}
-          <p className="text-[12px] text-ink-3 mt-3">
-            <strong className="text-ink-2">Write the passphrase down.</strong> Nobody holds a copy, so there is no reset
-            link — lose it and whatever is in the vault is gone. Your local export stays the real backup either way.
-          </p>
-        </>
-      )}
+        </div>
+        <Button tone="primary" icon="refresh" onClick={() => sync()} disabled={syncState.status === 'syncing'}>
+          {syncState.status === 'syncing' ? 'Syncing…' : 'Sync now'}
+        </Button>
+        <Button size="sm" tone="ghost" onClick={signOut}>Sign out</Button>
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-line">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 w-4 h-4 accent-accent"
+            checked={!!settings.autoSync}
+            onChange={(e) => setSetting('autoSync', e.target.checked)}
+          />
+          <span>
+            <span className="text-[13px] font-medium block">Sync in the background</span>
+            <span className="text-[12px] text-ink-3 block mt-0.5">
+              Off by default. On, it also syncs when you reopen the app, when the network returns, and a few seconds
+              after you stop editing.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <p className="text-[12px] text-ink-3 mt-3.5">
+        Devices merge on the newest edit per record. Deletes replicate, so removing something on your phone does not
+        come back from your laptop. The running timer is deliberately not synced.
+      </p>
     </Card>
   )
 }
