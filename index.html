@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Life Monitor</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◷</text></svg>">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Navigation rail (desktop) / tab bar (mobile) ───────────────── -->
+  <nav class="rail" aria-label="Main">
+    <div class="rail__brand">
+      <span class="rail__mark" aria-hidden="true"></span>
+      <span class="rail__name">Life Monitor</span>
+    </div>
+    <ul class="rail__list" id="nav"></ul>
+    <div class="rail__foot">
+      <button class="iconbtn" id="themeToggle" type="button" aria-label="Toggle colour theme" title="Toggle theme"></button>
+    </div>
+  </nav>
+
+  <!-- ── Screen ─────────────────────────────────────────────────────── -->
+  <main class="view" id="view" tabindex="-1"></main>
+
+</div>
+
+<!-- shared chart tooltip -->
+<div class="tip" id="tip" role="status" aria-live="polite" hidden></div>
+
+<!-- shared dialog -->
+<dialog class="modal" id="modal" aria-labelledby="modalTitle"></dialog>
+
+<!-- toast / undo -->
+<div class="toast" id="toast" hidden></div>
+
+<script src="js/icons.js"></script>
+<script src="js/config.js"></script>
+<script src="js/store.js"></script>
+<script src="js/model.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/seed.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
