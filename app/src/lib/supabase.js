@@ -24,13 +24,21 @@ function validOrigin(value) {
 
 const url = validOrigin(rawUrl)
 
+/* Name exactly which variable failed to arrive. "Sign-in is off" without
+   saying why turns a two-minute dashboard fix into an afternoon of
+   guessing — and the most common cause is a variable that exists but is
+   not enabled for the Production environment, which looks identical to
+   one that was never added. */
 export let configError = null
-if (rawUrl && !url) {
-  configError = `VITE_SUPABASE_URL is not a valid URL ("${rawUrl}"). It should look like https://your-ref.supabase.co`
+if (!rawUrl && !anonKey) {
+  configError =
+    'Neither VITE_SUPABASE_URL nor VITE_SUPABASE_ANON_KEY reached this build. If they are set in your host, check they are enabled for the Production environment and redeploy without the build cache.'
+} else if (rawUrl && !url) {
+  configError = `VITE_SUPABASE_URL arrived but is not a valid URL: "${rawUrl}". It must be exactly https://your-ref.supabase.co — no quotes, no trailing slash, no spaces.`
 } else if (url && !anonKey) {
-  configError = 'VITE_SUPABASE_URL is set but VITE_SUPABASE_ANON_KEY is missing.'
-} else if (!url && anonKey) {
-  configError = 'VITE_SUPABASE_ANON_KEY is set but VITE_SUPABASE_URL is missing.'
+  configError = 'VITE_SUPABASE_URL arrived but VITE_SUPABASE_ANON_KEY did not. Check the key name for a typo or a trailing space.'
+} else if (!rawUrl && anonKey) {
+  configError = 'VITE_SUPABASE_ANON_KEY arrived but VITE_SUPABASE_URL did not. Check the URL name for a typo or a trailing space.'
 }
 
 let client = null

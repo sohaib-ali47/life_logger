@@ -6,6 +6,7 @@ import Icon from './components/Icon'
 import { Toast, IconButton } from './components/ui'
 import { TipProvider } from './components/charts'
 import { AppProvider, useApp } from './lib/store'
+import { configError } from './lib/supabase'
 import Today from './screens/Today'
 import Stats from './screens/Stats'
 import Review from './screens/Review'
@@ -156,9 +157,9 @@ function Shell() {
           >
             <Icon name="lock" size={15} className="mt-px shrink-0" />
             <span>
-              <strong>Sign-in is off on this build.</strong> Set <code>VITE_SUPABASE_URL</code> and{' '}
-              <code>VITE_SUPABASE_ANON_KEY</code> in your host&apos;s environment variables and redeploy — Vite inlines
-              them at build time, so they must be set <em>before</em> the build. Until then this device is local-only.
+              <strong>Sign-in is off on this build.</strong>{' '}
+              {configError || 'Environment variables were not readable at build time.'} Until then this device is
+              local-only.
             </span>
           </div>
         )}
