@@ -42,10 +42,11 @@ export const useApp = () => useContext(Ctx)
 let bootPromise = null
 function bootOnce() {
   bootPromise ||= (async () => {
-    const [savedSettings, savedSections, savedEntries] = await Promise.all([
+    const [savedSettings, savedSections, savedEntries, savedPlans] = await Promise.all([
       db.getMeta('settings'),
       db.getAll(db.STORES.sections),
       db.getAll(db.STORES.entries),
+      db.getAll(db.STORES.plans),
     ])
 
     const s = { ...DEFAULT_SETTINGS, ...(savedSettings || {}) }
@@ -92,7 +93,7 @@ function bootOnce() {
 
     if (settingsDirty) await db.setMeta('settings', s)
 
-    return { settings: s, sections: secs, entries: ents }
+    return { settings: s, sections: secs, entries: ents, plans: savedPlans || [] }
   })()
   return bootPromise
 }
@@ -102,6 +103,7 @@ export function AppProvider({ children }) {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [sections, setSections] = useState([])
   const [entries, setEntries] = useState([])
+  const [plans, setPlans] = useState([])
   const [toast, setToast] = useState(null)
   const [auth, setAuth] = useState({ ready: !isConfigured, session: null, recovery: false, notice: null })
   const [syncState, setSyncState] = useState({ status: 'idle', at: null, error: null })
@@ -111,7 +113,7 @@ export function AppProvider({ children }) {
   const syncing = useRef(false)
   const flashRef = useRef(null)
   /* the sync loop reads this rather than closing over stale state */
-  const snapshotRef = useRef({ sections: [], entries: [], settings: DEFAULT_SETTINGS })
+  const snapshotRef = useRef({ sections: [], entries: [], plans: [], settings: DEFAULT_SETTINGS })
 
   configure(settings)
 
@@ -125,6 +127,7 @@ export function AppProvider({ children }) {
         setSettings(boot.settings)
         setSections([...boot.sections].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)))
         setEntries(boot.entries)
+        setPlans(boot.plans)
       } catch (err) {
         console.error('Storage unavailable — running in memory only.', err)
         if (!alive) return
@@ -162,8 +165,8 @@ export function AppProvider({ children }) {
 
   /* the sync run reads from a ref so it never works against stale state */
   useEffect(() => {
-    snapshotRef.current = { sections, entries, settings }
-  }, [sections, entries, settings])
+    snapshotRef.current = { sections, entries, plans, settings }
+  }, [sections, entries, plans, settings])
 
   /* Pick up a confirmation, magic link or recovery redirect, then follow
      the session for the rest of the app's life. */
@@ -213,6 +216,7 @@ export function AppProvider({ children }) {
         userId,
         sections: snapshot.sections,
         entries: snapshot.entries,
+        plans: snapshot.plans,
         settings: snapshot.settings,
         cursor: cursor ?? null,
       })
@@ -220,6 +224,7 @@ export function AppProvider({ children }) {
       await db.setMeta('syncCursor', result.cursor)
       setSections([...result.sections].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)))
       setEntries(result.entries)
+      if (result.plans) setPlans(result.plans)
       if (result.settings !== snapshot.settings) persistSettings(result.settings, { touch: false })
 
       const at = new Date().toISOString()
@@ -380,18 +385,31 @@ export function AppProvider({ children }) {
     )
   }, [])
 
-  /* ── timer ────────────────────────────────────────────────────── */
-  const startTimer = useCallback((sectionId, variantId = null) => {
-    persistSettings({
-      ...settings,
-      timer: { sectionId, variantId, startedAt: new Date().toISOString() },
-    })
-  }, [settings, persistSettings])
+  /* ── timers ───────────────────────────────────────────────────── */
 
-  const stopTimer = useCallback((discard = false) => {
-    const t = settings.timer
-    persistSettings({ ...settings, timer: null })
-    if (!t || discard) return null
+  /* An array, not a single slot: two projects at once is a real thing, and
+     so is a load of laundry running while you work. Each timer carries its
+     own id so stopping one never disturbs the others. */
+  const timers = useMemo(() => {
+    if (Array.isArray(settings.timers)) return settings.timers
+    /* migrate the old single-timer shape without losing a running clock */
+    return settings.timer ? [{ id: 'legacy', ...settings.timer }] : []
+  }, [settings.timers, settings.timer])
+
+  const startTimer = useCallback((sectionId, variantId = null) => {
+    const next = [
+      ...timers,
+      { id: db.uid(), sectionId, variantId, startedAt: new Date().toISOString() },
+    ]
+    persistSettings({ ...settings, timers: next, timer: null })
+  }, [settings, timers, persistSettings])
+
+  const stopTimer = useCallback((timerId = null, discard = false) => {
+    const t = timerId ? timers.find((x) => x.id === timerId) : timers[0]
+    if (!t) return null
+    persistSettings({ ...settings, timers: timers.filter((x) => x.id !== t.id), timer: null })
+    if (discard) return null
+
     const start = new Date(t.startedAt)
     const minutes = Math.max(1, Math.round((Date.now() - start.getTime()) / 60000))
     const rec = addEntry({
@@ -402,8 +420,38 @@ export function AppProvider({ children }) {
       meta: t.variantId ? { variant: t.variantId } : {},
       source: 'timer',
     })
-    return { rec, minutes }
-  }, [settings, persistSettings, addEntry])
+    return { rec, minutes, timer: t }
+  }, [settings, timers, persistSettings, addEntry])
+
+  /* ── plans: what you said you would do ────────────────────────── */
+  const addPlan = useCallback((patch) => {
+    const rec = db.newPlan(patch)
+    db.put(db.STORES.plans, rec).catch(() => {})
+    setPlans((prev) => [...prev, rec])
+    return rec
+  }, [])
+
+  const updatePlan = useCallback((id, patch) => {
+    setPlans((prev) =>
+      prev.map((pl) => {
+        if (pl.id !== id) return pl
+        const next = { ...pl, ...patch, updatedAt: db.stamp() }
+        db.put(db.STORES.plans, next).catch(() => {})
+        return next
+      })
+    )
+  }, [])
+
+  const deletePlan = useCallback((id) => {
+    setPlans((prev) =>
+      prev.map((pl) => {
+        if (pl.id !== id) return pl
+        const next = { ...pl, deletedAt: db.stamp(), updatedAt: db.stamp() }
+        db.put(db.STORES.plans, next).catch(() => {})
+        return next
+      })
+    )
+  }, [])
 
   /* ── follow-ups: answer a question about an entry after the fact ── */
   const setEntryMeta = useCallback((id, patch) => {
@@ -554,12 +602,16 @@ export function AppProvider({ children }) {
   )
   const active = useMemo(() => visible.filter((s) => !s.archived), [visible])
   const live = useMemo(() => entries.filter((e) => !e.deletedAt), [entries])
+  const livePlans = useMemo(() => plans.filter((p) => !p.deletedAt), [plans])
   const idx = useMemo(() => indexEntries(entries), [entries])
 
   const totalsFor = useCallback((keys) => totalsByDay(active, idx, keys), [active, idx])
 
   const value = {
     ready, settings, sections, visible, active, entries: live, allEntries: entries, idx, toast,
+    plans: livePlans, allPlans: plans,
+    addPlan, updatePlan, deletePlan,
+    timers,
     bootstrapping,
     setSetting: (k, v) => persistSettings({ ...settings, [k]: v }),
     persistSettings, flash, dismissToast: () => setToast(null),

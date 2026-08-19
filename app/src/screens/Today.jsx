@@ -29,7 +29,7 @@ export default function Today({ dayKey, navigate }) {
   const app = useApp()
   const {
     active, entries, idx, settings, addEntry, deleteEntry, setEntryMeta,
-    addVariant, removeVariant, addExercise, createSection, freeSlot, startTimer,
+    addVariant, removeVariant, addExercise, createSection, freeSlot, startTimer, timers, plans,
   } = app
   const key = dayKey || todayKey()
   const isToday = key === todayKey()
@@ -85,26 +85,29 @@ export default function Today({ dayKey, navigate }) {
     () =>
       isToday
         ? buildNudges(active, totals, entries, new Date(now), key, {
-            timer: settings.timer,
+            timers,
+            plans: plans.filter((p) => p.date === key),
             dayEntries,
             dayClosed,
+            nowDayMin: minutesFromBoundary(localStamp(new Date(now))),
+            planClock: (m) => stampFromDayMinutes(key, m).slice(11, 16),
           }).filter((n) => !dismissed.has(n.id))
         : [],
-    [active, totals, entries, now, key, isToday, settings.timer, dayEntries, dayClosed, dismissed]
+    [active, totals, entries, now, key, isToday, timers, plans, dayEntries, dayClosed, dismissed]
   )
 
   /* mirror the actionable nudges to the OS, once each */
   useEffect(() => {
     for (const n of nudges) {
-      if (!['break', 'item', 'due', 'over', 'close'].includes(n.kind)) continue
+      if (!['break', 'item', 'due', 'over', 'close', 'plan'].includes(n.kind)) continue
       if (notify.fire(n.id, n.text, n.detail || 'Life OS')) notify.buzz()
     }
   }, [nudges])
 
   /* ── the hourly check-in ────────────────────────────────────────── */
   const gap = useMemo(
-    () => findGap({ sections: active, dayEntries, now: new Date(now), timer: settings.timer, isToday }),
-    [active, dayEntries, now, settings.timer, isToday]
+    () => findGap({ sections: active, dayEntries, now: new Date(now), timers, isToday }),
+    [active, dayEntries, now, timers, isToday]
   )
 
   const gapId = gap ? checkinId(new Date(now), key) : null
@@ -694,67 +697,87 @@ function NudgeCard({ nudge, section, onDismiss, onTick, onStart, onAnswer, onQui
 }
 
 function TimerCard({ now, onBegin, onFollowUp }) {
-  const { active, settings, stopTimer, flash } = useApp()
-  const timer = settings.timer
+  const { active, timers, stopTimer, flash } = useApp()
   const timed = active.filter((s) => ['duration', 'session'].includes(s.primitive))
+  const running = new Set(timers.map((t) => t.sectionId))
 
-  if (timer) {
-    const s = active.find((x) => x.id === timer.sectionId)
-    const vName = s?.variants?.find((v) => v.id === timer.variantId)?.name
-    const elapsed = now - new Date(timer.startedAt).getTime()
-    const startedAt = clockOf(localStamp(new Date(timer.startedAt)))
-
-    return (
-      <Card title="Running" className="mb-3.5">
-        <div className="flex items-center gap-3.5 flex-wrap">
-          <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: s ? slotVar(s) : 'var(--accent)' }} />
-          <div className="text-[30px] font-semibold tracking-tight num">{fmtClock(elapsed)}</div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[13px] text-ink-2">
-              <Icon name={s?.icon || 'clock'} size={16} />
-              {vName ? `${s?.name} · ${vName}` : s?.name}
-            </div>
-            <div className="text-[11.5px] text-ink-3">started {startedAt}</div>
-          </div>
-          <div className="ml-auto flex gap-2">
-            <Button
-              tone="primary"
-              icon="stop"
-              onClick={() => {
-                const r = stopTimer()
-                if (!r) return
-                flash(`${s?.name} — ${fmtMinutes(r.minutes)} logged.`)
-                if (s?.followUp?.when === 'log') {
-                  onFollowUp({
-                    section: s,
-                    followUp: s.followUp,
-                    entryId: r.rec.id,
-                    subtitle: `${vName || s.name} · ${fmtMinutes(r.minutes)}`,
-                  })
-                }
-              }}
-            >
-              Stop &amp; log
-            </Button>
-            <Button tone="ghost" onClick={() => stopTimer(true)}>Discard</Button>
-          </div>
-        </div>
-      </Card>
-    )
+  const stop = (timer, section, vName, discard) => {
+    const r = stopTimer(timer.id, discard)
+    if (!r) return
+    flash(`${section?.name} — ${fmtMinutes(r.minutes)} logged.`)
+    if (section?.followUp?.when === 'log') {
+      onFollowUp({
+        section,
+        followUp: section.followUp,
+        entryId: r.rec.id,
+        subtitle: `${vName || section.name} · ${fmtMinutes(r.minutes)}`,
+      })
+    }
   }
 
   return (
-    <Card title="Timer" sub="Start one and it logs itself — with the exact moment it began — when you stop." className="mb-3.5">
+    <Card
+      title={timers.length ? `Running · ${timers.length}` : 'Timer'}
+      sub={
+        timers.length
+          ? 'Each one logs itself, with the exact moment it began, when you stop it.'
+          : 'Start one and it logs itself — with the exact moment it began — when you stop.'
+      }
+      className="mb-3.5"
+    >
+      {/* every running clock, because two projects at once is a real thing */}
+      {timers.length > 0 && (
+        <div className="grid gap-2 mb-3">
+          {timers.map((timer) => {
+            const s = active.find((x) => x.id === timer.sectionId)
+            const vName = s?.variants?.find((v) => v.id === timer.variantId)?.name
+            const elapsed = now - new Date(timer.startedAt).getTime()
+            const tint = s ? slotVar(s) : 'var(--accent)'
+            return (
+              <div
+                key={timer.id}
+                className="flex items-center gap-3 flex-wrap rounded-[13px] border border-line p-3"
+                style={{ background: `color-mix(in oklab, ${tint} 7%, var(--surface))` }}
+              >
+                <span className="w-2 h-2 rounded-full animate-pulse shrink-0" style={{ background: tint }} />
+                <div className="text-[26px] font-semibold tracking-tight num leading-none">{fmtClock(elapsed)}</div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[13px] text-ink-2">
+                    <Icon name={s?.icon || 'clock'} size={15} />
+                    <span className="truncate">{vName ? `${s?.name} · ${vName}` : s?.name}</span>
+                  </div>
+                  <div className="text-[11.5px] text-ink-3">
+                    started {clockOf(localStamp(new Date(timer.startedAt)))}
+                  </div>
+                </div>
+                <div className="ml-auto flex gap-1.5">
+                  <Button size="sm" tone="primary" icon="stop" onClick={() => stop(timer, s, vName, false)}>
+                    Stop &amp; log
+                  </Button>
+                  <IconButton name="x" label="Discard" size={32} onClick={() => stop(timer, s, vName, true)} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-1.5">
         {timed.map((s) => (
           <Chip key={s.id} tint={slotVar(s)} onClick={() => onBegin(s)}>
             <span className="inline-flex items-center gap-1.5">
-              <Icon name="play" size={12} />
+              <Icon name={running.has(s.id) ? 'plus' : 'play'} size={12} />
               {s.name}
             </span>
           </Chip>
         ))}
       </div>
+      {timers.length > 1 && (
+        <p className="text-[11.5px] text-ink-3 mt-3">
+          Overlapping timers each record their own block, so the day can add up to more than the hours in it. That is
+          intended — two things at once is a fact, not an error.
+        </p>
+      )}
     </Card>
   )
 }

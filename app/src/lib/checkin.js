@@ -21,8 +21,8 @@ const AWAKE_UNTIL = 24
  * @returns null, or the gap to offer:
  *   { startMin, endMin, minutes, startStamp, last: {section, entry}|null, capped }
  */
-export function findGap({ sections, dayEntries, now = new Date(), timer = null, isToday = true }) {
-  if (!isToday || timer) return null
+export function findGap({ sections, dayEntries, now = new Date(), timers = [], isToday = true }) {
+  if (!isToday || timers.length) return null
 
   const hour = now.getHours()
   if (hour < AWAKE_FROM || hour >= AWAKE_UNTIL) return null

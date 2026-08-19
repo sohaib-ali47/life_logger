@@ -77,6 +77,35 @@ const entryToRow = (entry, userId) => ({
   deleted_at: entry.deletedAt ?? null,
 })
 
+const planToRow = (plan, userId) => ({
+  user_id: userId,
+  id: plan.id,
+  section_id: plan.sectionId,
+  variant_id: plan.variantId ?? null,
+  date: plan.date,
+  start_min: plan.startMin,
+  minutes: plan.minutes,
+  title: plan.title ?? '',
+  remind_before: plan.remindBefore ?? 5,
+  created_at: plan.createdAt ?? new Date().toISOString(),
+  updated_at: plan.updatedAt ?? new Date().toISOString(),
+  deleted_at: plan.deletedAt ?? null,
+})
+
+const rowToPlan = (row) => ({
+  id: row.id,
+  sectionId: row.section_id,
+  variantId: row.variant_id,
+  date: row.date,
+  startMin: row.start_min,
+  minutes: row.minutes,
+  title: row.title ?? '',
+  remindBefore: row.remind_before ?? 5,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  deletedAt: row.deleted_at,
+})
+
 const rowToEntry = (row) => ({
   id: row.id,
   sectionId: row.section_id,
@@ -151,25 +180,28 @@ async function pushAll(table, rows) {
 
 /* ── the run ────────────────────────────────────────────────────────── */
 
-export async function runSync({ userId, sections, entries, settings, cursor }) {
+export async function runSync({ userId, sections, entries, plans = [], settings, cursor }) {
   if (!isConfigured || !supabase || !userId) throw new Error('Sync is not available.')
 
   const since = cursor ? new Date(new Date(cursor).getTime() - OVERLAP_MS).toISOString() : null
 
   /* 1 — pull what changed since we last looked */
-  const [remoteSectionRows, remoteEntryRows, settingsRes] = await Promise.all([
+  const [remoteSectionRows, remoteEntryRows, remotePlanRows, settingsRes] = await Promise.all([
     pullAll('sections', userId, since),
     pullAll('entries', userId, since),
+    pullAll('plans', userId, since),
     supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
   ])
   if (settingsRes.error) throw settingsRes.error
 
   const remoteSections = remoteSectionRows.map(rowToSection)
   const remoteEntries = remoteEntryRows.map(rowToEntry)
+  const remotePlans = remotePlanRows.map(rowToPlan)
 
   /* 2 — merge into what we hold */
   const s = mergeById(sections, remoteSections)
   const e = mergeById(entries, remoteEntries)
+  const pl = mergeById(plans, remotePlans)
 
   /* 3 — settings: whole-document last-write-wins */
   const remoteSettings = settingsRes.data
@@ -183,14 +215,17 @@ export async function runSync({ userId, sections, entries, settings, cursor }) {
      just learned */
   if (s.adopted.length) await db.putMany(db.STORES.sections, s.adopted)
   if (e.adopted.length) await db.putMany(db.STORES.entries, e.adopted)
+  if (pl.adopted.length) await db.putMany(db.STORES.plans, pl.adopted)
 
   /* 5 — push. Sections first: an entry referencing a section the server has
      never seen would arrive orphaned the other way round. */
   const outSections = outbound(s.merged, remoteSections)
   const outEntries = outbound(e.merged, remoteEntries)
+  const outPlans = outbound(pl.merged, remotePlans)
 
   if (outSections.length) await pushAll('sections', outSections.map((x) => sectionToRow(x, userId)))
   if (outEntries.length) await pushAll('entries', outEntries.map((x) => entryToRow(x, userId)))
+  if (outPlans.length) await pushAll('plans', outPlans.map((x) => planToRow(x, userId)))
 
   if (!takeRemote) {
     const stamp = mergedSettings.settingsUpdatedAt ?? new Date().toISOString()
@@ -203,15 +238,17 @@ export async function runSync({ userId, sections, entries, settings, cursor }) {
   const stamps = [
     ...remoteSectionRows.map((r) => r.updated_at),
     ...remoteEntryRows.map((r) => r.updated_at),
+    ...remotePlanRows.map((r) => r.updated_at),
   ]
   const nextCursor = stamps.length ? stamps.reduce((a, b) => (a > b ? a : b)) : new Date().toISOString()
 
   return {
     sections: s.merged,
     entries: e.merged,
+    plans: pl.merged,
     settings: mergedSettings,
     cursor: nextCursor,
-    pulled: s.adopted.length + e.adopted.length,
-    pushed: outSections.length + outEntries.length,
+    pulled: s.adopted.length + e.adopted.length + pl.adopted.length,
+    pushed: outSections.length + outEntries.length + outPlans.length,
   }
 }

@@ -9,6 +9,7 @@ import { AppProvider, useApp } from './lib/store'
 import { configError } from './lib/supabase'
 import { firstName } from './lib/quotes'
 import Today from './screens/Today'
+import Plan from './screens/Plan'
 import Stats from './screens/Stats'
 import Review from './screens/Review'
 import Setup from './screens/Setup'
@@ -17,7 +18,8 @@ import Auth from './screens/Auth'
 import Preference from './screens/Preference'
 
 const NAV = [
-  { id: 'today', label: 'Today', icon: 'calendar', path: '/today' },
+  { id: 'today', label: 'Today', icon: 'sparkle', path: '/today' },
+  { id: 'plan', label: 'Plan', icon: 'calendar', path: '/plan' },
   { id: 'stats', label: 'Stats', icon: 'chart', path: '/stats' },
   { id: 'review', label: 'Review', icon: 'check', path: '/review' },
   { id: 'setup', label: 'Setup', icon: 'settings', path: '/setup' },
@@ -139,7 +141,8 @@ function Shell() {
             {n.label}
           </a>
         ))}
-        <div className="mt-auto px-1">
+        <div className="mt-auto px-1 grid gap-2">
+          <Clock />
           <IconButton
             name={app.settings.theme === 'dark' ? 'sun' : 'moon'}
             label="Toggle theme"
@@ -168,6 +171,7 @@ function Shell() {
             </span>
           </div>
         )}
+        {route.name === 'plan' && <Plan dayKey={route.arg} navigate={navigate} />}
         {route.name === 'stats' && <Stats navigate={navigate} />}
         {route.name === 'review' && <Review navigate={navigate} />}
         {route.name === 'setup' && <Setup navigate={navigate} query={route.query} />}
@@ -199,6 +203,31 @@ function Shell() {
       </nav>
 
       <Toast toast={app.toast} onDismiss={app.dismissToast} />
+    </div>
+  )
+}
+
+
+/* A live clock. The app is about where time goes, so the time itself
+   should never be more than a glance away. */
+function Clock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+  return (
+    <div className="px-1.5">
+      <div className="text-[17px] font-semibold num leading-none tracking-tight">
+        {hh}:{mm}
+        <span className="text-[11px] text-ink-3 ml-0.5">{ss}</span>
+      </div>
+      <div className="text-[11px] text-ink-3 mt-1">
+        {now.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
+      </div>
     </div>
   )
 }

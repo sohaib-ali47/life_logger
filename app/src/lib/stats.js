@@ -251,22 +251,51 @@ export function nudges(sections, dayTotals, entries, now = new Date(), key = tod
     return mins >= at && mins <= at + window
   }
 
-  /* ── a timer that has been running too long ─────────────────────── */
-  if (ctx.timer) {
-    const s = sections.find((x) => x.id === ctx.timer.sectionId)
-    if (s?.breakEvery) {
-      const elapsed = Math.floor((now.getTime() - new Date(ctx.timer.startedAt).getTime()) / 60000)
-      const blocks = Math.floor(elapsed / s.breakEvery)
-      if (blocks >= 1) {
-        out.push({
-          id: `break:${s.id}:${blocks}`,
-          sectionId: s.id,
-          kind: 'break',
-          text: `${elapsed} minutes on ${s.name} — take a break`,
-          detail: `You set a break every ${s.breakEvery} minutes.`,
-        })
-      }
-    }
+  /* ── timers that have been running too long ─────────────────────── */
+  for (const timer of ctx.timers ?? []) {
+    const s = sections.find((x) => x.id === timer.sectionId)
+    if (!s?.breakEvery) continue
+    const elapsed = Math.floor((now.getTime() - new Date(timer.startedAt).getTime()) / 60000)
+    const blocks = Math.floor(elapsed / s.breakEvery)
+    if (blocks < 1) continue
+    out.push({
+      id: `break:${timer.id ?? s.id}:${blocks}`,
+      sectionId: s.id,
+      kind: 'break',
+      text: `${elapsed} minutes on ${s.name} — take a break`,
+      detail: `You set a break every ${s.breakEvery} minutes.`,
+    })
+  }
+
+  /* ── a planned block coming up, or started and not logged ───────── */
+  for (const plan of ctx.plans ?? []) {
+    const s = sections.find((x) => x.id === plan.sectionId)
+    if (!s) continue
+    const lead = plan.remindBefore ?? 5
+    const from = plan.startMin - lead
+    const until = plan.startMin + plan.minutes
+    const nowDayMin = ctx.nowDayMin ?? mins
+    if (nowDayMin < from || nowDayMin > until) continue
+
+    /* already tracking it? then nothing to say */
+    const running = (ctx.timers ?? []).some((x) => x.sectionId === plan.sectionId)
+    if (running) continue
+    const logged = dayEntries.some(
+      (e) => e.sectionId === plan.sectionId && e.at && !e.deletedAt
+    )
+    if (logged && nowDayMin > plan.startMin) continue
+
+    const starting = nowDayMin < plan.startMin
+    out.push({
+      id: `plan:${plan.id}:${starting ? 'soon' : 'now'}`,
+      sectionId: s.id,
+      kind: 'plan',
+      text: starting
+        ? `${plan.title || s.name} starts in ${plan.startMin - nowDayMin} min`
+        : `You planned ${plan.title || s.name} now`,
+      detail: `${ctx.planClock?.(plan.startMin) ?? ''} · ${plan.minutes} min`.trim(),
+      action: { type: 'startTimer', sectionId: s.id, variantId: plan.variantId },
+    })
   }
 
   for (const s of sections) {

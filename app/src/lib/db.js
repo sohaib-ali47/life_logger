@@ -10,8 +10,8 @@
  */
 
 const DB_NAME = 'life-os'
-const DB_VERSION = 1
-export const STORES = { meta: 'meta', sections: 'sections', entries: 'entries' }
+const DB_VERSION = 2
+export const STORES = { meta: 'meta', sections: 'sections', entries: 'entries', plans: 'plans' }
 
 let dbPromise = null
 
@@ -27,6 +27,15 @@ function open() {
       const db = req.result
       if (!db.objectStoreNames.contains(STORES.meta)) db.createObjectStore(STORES.meta)
       if (!db.objectStoreNames.contains(STORES.sections)) db.createObjectStore(STORES.sections, { keyPath: 'id' })
+      /* Plans are intentions: what you said you would do, and when.
+         Kept in their own store rather than as a flag on entries, because
+         a plan that never happened is still a fact worth keeping — that
+         gap is the whole point of comparing plan against actual. */
+      if (!db.objectStoreNames.contains(STORES.plans)) {
+        const s = db.createObjectStore(STORES.plans, { keyPath: 'id' })
+        s.createIndex('date', 'date')
+        s.createIndex('sectionId', 'sectionId')
+      }
       if (!db.objectStoreNames.contains(STORES.entries)) {
         const s = db.createObjectStore(STORES.entries, { keyPath: 'id' })
         s.createIndex('date', 'date')
@@ -78,7 +87,7 @@ export const getMeta = (key) => tx(STORES.meta, 'readonly', (s) => s.get(key))
 export const setMeta = (key, value) => tx(STORES.meta, 'readwrite', (s) => s.put(value, key))
 
 export const wipe = () =>
-  Promise.all([clear(STORES.entries), clear(STORES.sections), clear(STORES.meta)])
+  Promise.all([clear(STORES.entries), clear(STORES.sections), clear(STORES.plans), clear(STORES.meta)])
 
 /* ── record helpers ─────────────────────────────────────────────────── */
 
@@ -99,6 +108,22 @@ export function newEntry(patch) {
     note: patch.note || '',
     meta: patch.meta || {},
     source: patch.source || 'manual',
+    createdAt: stamp(),
+    updatedAt: stamp(),
+    deletedAt: null,
+  }
+}
+
+export function newPlan(patch) {
+  return {
+    id: uid(),
+    sectionId: patch.sectionId,
+    variantId: patch.variantId ?? null,
+    date: patch.date,
+    startMin: Math.max(0, Math.round(patch.startMin ?? 0)),
+    minutes: Math.max(5, Math.round(patch.minutes ?? 30)),
+    title: patch.title ?? '',
+    remindBefore: patch.remindBefore ?? 5,   /* minutes before it starts */
     createdAt: stamp(),
     updatedAt: stamp(),
     deletedAt: null,
