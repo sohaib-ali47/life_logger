@@ -108,13 +108,10 @@ function mergeById(local, remote) {
   return { merged: [...byId.values()], adopted }
 }
 
-/** Everything the server has not seen, or holds an older copy of.
- *  Demo entries are never uploaded — sample data is a local sandbox, and
- *  pushing it would pollute a real account's history. */
+/** everything the server has not seen, or holds an older copy of */
 function outbound(local, remote) {
   const remoteById = new Map(remote.map((r) => [r.id, r]))
   return local.filter((mine) => {
-    if (mine.source === 'demo') return false
     const theirs = remoteById.get(mine.id)
     return !theirs || newer(mine.updatedAt, theirs.updatedAt)
   })

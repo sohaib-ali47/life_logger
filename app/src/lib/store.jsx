@@ -10,7 +10,6 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, useCal
 import * as db from './db'
 import { seedSections, withDefaults, SECTIONS_VERSION, DEFAULT_IDS, suitsAudience } from './sections'
 import { configure, today, dayKeyFor, localStamp } from './dates'
-import { generate } from './seed'
 import { indexEntries, totalsByDay } from './stats'
 import {
   isConfigured, currentSession, onAuthChange, consumeAuthRedirect, signOut as authSignOut,
@@ -25,6 +24,7 @@ const DEFAULT_SETTINGS = {
   sectionsVersion: 0,
   autoSync: false,
   notifyPromptDismissed: false,
+  displayName: '',
   /* null until answered. Gating the preference screen on this — rather than
      on a "you have seen it" flag — is what makes it reappear next sign-in
      for anyone who never answered, and stay gone once they have. */
@@ -68,19 +68,23 @@ function bootOnce() {
       await db.clear(db.STORES.sections)
       await db.putMany(db.STORES.sections, secs)
 
-      const allDemo = ents.length > 0 && ents.every((e) => e.source === 'demo')
-      if (allDemo) {
-        ents = generate(90)
-        await db.clear(db.STORES.entries)
-        await db.putMany(db.STORES.entries, ents)
-      }
       s.sectionsVersion = SECTIONS_VERSION
       settingsDirty = true
     }
 
-    /* Nothing is seeded automatically any more. A new account opens on a
-       genuinely empty app — the sample history is a button in Setup, and
-       demo entries are never uploaded. */
+    /* Sample data is gone from the product. Earlier versions seeded a
+       fake 90-day history; purge any of it still sitting on this device so
+       nobody is looking at numbers that never happened. It was never
+       uploaded, so there is nothing to clean up server-side. */
+    const demo = ents.filter((e) => e.source === 'demo')
+    if (demo.length) {
+      const real = ents.filter((e) => e.source !== 'demo')
+      await db.clear(db.STORES.entries)
+      if (real.length) await db.putMany(db.STORES.entries, real)
+      ents = real
+      console.info(`[life-os] removed ${demo.length} leftover sample entries`)
+    }
+
     if (s.sectionsVersion !== SECTIONS_VERSION) {
       s.sectionsVersion = SECTIONS_VERSION
       settingsDirty = true
@@ -125,7 +129,7 @@ export function AppProvider({ children }) {
         console.error('Storage unavailable — running in memory only.', err)
         if (!alive) return
         setSections(seedSections())
-        setEntries(generate(90))
+        setEntries([])
       } finally {
         if (alive) setReady(true)
       }
@@ -240,8 +244,7 @@ export function AppProvider({ children }) {
 
   /* One sync on sign-in, because arriving on a new device to an empty app
      would be absurd. Everything beyond that is opt-in.
-     Demo entries are cleared first: they were never uploaded, and a real
-     account should not open onto somebody else's fictional history. */
+     */
   const signedInFor = useRef(null)
   const [bootstrapping, setBootstrapping] = useState(false)
 
@@ -252,14 +255,6 @@ export function AppProvider({ children }) {
 
     let alive = true
     ;(async () => {
-      const snapshot = snapshotRef.current
-      const demoOnly = snapshot.entries.length > 0 && snapshot.entries.every((e) => e.source === 'demo')
-      if (demoOnly) {
-        await db.clear(db.STORES.entries)
-        if (!alive) return
-        setEntries([])
-        snapshotRef.current = { ...snapshotRef.current, entries: [] }
-      }
       const fresh = !(await db.getMeta('syncCursor'))
       if (fresh && alive) setBootstrapping(true)
       await sync({ silent: true })
@@ -537,26 +532,6 @@ export function AppProvider({ children }) {
     return raw.entries.length
   }, [entries])
 
-  const loadDemo = useCallback(async ({ silent = false } = {}) => {
-    const next = generate(90)
-    await db.clear(db.STORES.entries)
-    await db.putMany(db.STORES.entries, next)
-    setEntries(next)
-    if (!silent) flash(`${next.length} sample entries loaded across 90 days. They never leave this device.`)
-  }, [flash])
-
-  /* Drop sample entries without touching anything you actually logged.
-     "Start empty" has to mean empty even on a device that was demoing. */
-  const clearDemo = useCallback(async () => {
-    const keep = snapshotRef.current.entries.filter((e) => e.source !== 'demo')
-    if (keep.length === snapshotRef.current.entries.length) return 0
-    const removed = snapshotRef.current.entries.length - keep.length
-    await db.clear(db.STORES.entries)
-    if (keep.length) await db.putMany(db.STORES.entries, keep)
-    setEntries(keep)
-    return removed
-  }, [])
-
   const wipeAll = useCallback(async () => {
     await db.wipe()
     const secs = seedSections()
@@ -592,7 +567,7 @@ export function AppProvider({ children }) {
     saveSection, archiveSection, createSection, addVariant, removeVariant, addExercise, freeSlot,
     startTimer, stopTimer, setDayClosed,
     isDayClosed: (k) => (settings.closedDays || []).includes(k),
-    exportJSON, importJSON, loadDemo, clearDemo, wipeAll,
+    exportJSON, importJSON, wipeAll,
     totalsFor, today,
     /* accounts and sync */
     accountsEnabled: isConfigured,

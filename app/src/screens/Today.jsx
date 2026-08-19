@@ -831,7 +831,7 @@ function NotifyPrompt() {
  * every tap is wallpaper, and after two days you stop reading it. */
 function WelcomeCard() {
   const { user, settings, entries } = useApp()
-  const name = firstName(user)
+  const name = firstName(user, settings.displayName)
   const quote = quoteFor(todayKey())
   const hello = greeting(new Date(), name)
   const logged = entries.filter((e) => e.date === todayKey()).length

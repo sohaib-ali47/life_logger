@@ -9,22 +9,22 @@
 
 import { useState } from 'react'
 import Icon from '../components/Icon'
-import { Button } from '../components/ui'
+import { Button, inputClass } from '../components/ui'
 import { useApp } from '../lib/store'
 import { AUDIENCES } from '../lib/sections'
+import { firstName } from '../lib/quotes'
 
 export default function Preference() {
   const { persistSettings, settings, user } = useApp()
   const [sex, setSex] = useState(null)
+  const [name, setName] = useState(() => firstName(user, settings.displayName) ?? '')
   const [busy, setBusy] = useState(false)
 
   const save = () => {
     if (!sex) return
     setBusy(true)
-    persistSettings({ ...settings, sex })
+    persistSettings({ ...settings, sex, displayName: name.trim() })
   }
-
-  const name = user?.user_metadata?.full_name
 
   return (
     <div className="min-h-screen flex flex-col justify-center px-6 py-12 pt-safe">
@@ -39,14 +39,30 @@ export default function Preference() {
         />
 
         <h1 className="text-[25px] font-semibold tracking-[-.02em] leading-tight">
-          {name ? `One question, ${name}.` : 'One question before you start.'}
+          {name.trim() ? `Welcome, ${name.trim()}.` : 'Welcome to Life OS.'}
         </h1>
         <p className="text-[13.5px] text-ink-2 mt-2.5 leading-relaxed">
-          A few of the trackers only make sense for some people. Your answer decides which ones you are offered —
-          nothing else, and nothing is shown to anyone.
+          Two quick things and you are in. Both are changeable later in Setup.
         </p>
 
-        <div className="grid gap-2 mt-8">
+        <label className="grid gap-1.5 mt-8">
+          <span className="text-[14px] font-semibold">What should the app call you?</span>
+          <input
+            className={inputClass}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Sohaib"
+            autoComplete="given-name"
+            autoFocus
+          />
+        </label>
+
+        <h2 className="text-[14px] font-semibold mt-8">Which applies to you?</h2>
+        <p className="text-[12.5px] text-ink-3 mt-1 leading-relaxed">
+          A few trackers only make sense for some people. This decides which ones you are offered — nothing else.
+        </p>
+
+        <div className="grid gap-2 mt-4">
           {AUDIENCES.map((a) => {
             const on = sex === a.id
             return (

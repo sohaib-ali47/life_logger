@@ -46,6 +46,7 @@ const textToQuick = (text) =>
 export default function Setup({ navigate, query }) {
   const app = useApp()
   const { sections, visible, active, entries, settings, saveSection, archiveSection } = app
+  const hiddenByAudience = sections.length - visible.length
   const [editing, setEditing] = useState(null)
   const [perm, setPerm] = useState(notify.status())
   const fileRef = useRef(null)
@@ -190,11 +191,31 @@ export default function Setup({ navigate, query }) {
           )
         })}
         {!sections.length && <Empty icon="grid">No sections yet.</Empty>}
+
+        {hiddenByAudience > 0 && (
+          <p className="text-[12px] text-ink-3 mt-3 pt-3 border-t border-line">
+            {hiddenByAudience} tracker{hiddenByAudience === 1 ? '' : 's'} {hiddenByAudience === 1 ? 'is' : 'are'} hidden
+            because &ldquo;Which applies to you&rdquo; is set to{' '}
+            <strong className="text-ink-2">
+              {AUDIENCES.find((a) => a.id === (settings.sex ?? 'unspecified'))?.label}
+            </strong>
+            . Change it under Settings below and they appear here.
+          </p>
+        )}
       </Card>
 
       {/* ── settings ───────────────────────────────────────────────── */}
       <Card title="Settings" className="mb-3.5">
         <div className="grid gap-3.5 sm:grid-cols-2">
+          <Field label="Your name" hint="Used to greet you. Nothing else.">
+            <input
+              className={inputClass}
+              value={settings.displayName ?? ''}
+              onChange={(e) => app.setSetting('displayName', e.target.value)}
+              placeholder="Sohaib"
+              autoComplete="given-name"
+            />
+          </Field>
           <Field label="Theme">
             <select className={inputClass} value={settings.theme} onChange={(e) => app.setSetting('theme', e.target.value)}>
               <option value="dark">Dark</option>
@@ -268,33 +289,6 @@ export default function Setup({ navigate, query }) {
         <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" />
       </Card>
 
-      <Card title="Sample data">
-        <div className="flex flex-wrap gap-2">
-          <Button icon="sparkle" onClick={() => app.loadDemo()}>Load 90 days of sample data</Button>
-          <Button
-            icon="refresh"
-            onClick={async () => {
-              const n = await app.clearDemo()
-              app.flash(n ? `${n} sample entries removed.` : 'No sample data to remove.')
-            }}
-          >
-            Remove sample data
-          </Button>
-          <Button
-            tone="danger"
-            icon="trash"
-            onClick={() => {
-              if (confirm('Erase every entry on this device? Export first if you want it back.')) app.wipeAll()
-            }}
-          >
-            Erase everything
-          </Button>
-        </div>
-        <p className="text-[12px] text-ink-3 mt-3.5">
-          Sample data replaces whatever is there, and is never uploaded to your account — it exists so you can judge
-          the charts before committing real days to them.
-        </p>
-      </Card>
 
       <SectionEditor
         section={editing}

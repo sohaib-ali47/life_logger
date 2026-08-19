@@ -7,6 +7,7 @@ import { Toast, IconButton } from './components/ui'
 import { TipProvider } from './components/charts'
 import { AppProvider, useApp } from './lib/store'
 import { configError } from './lib/supabase'
+import { firstName } from './lib/quotes'
 import Today from './screens/Today'
 import Stats from './screens/Stats'
 import Review from './screens/Review'
@@ -65,6 +66,7 @@ function Shell() {
   }, [])
 
   const activeTab = route.name === 'section' ? 'stats' : route.name
+  const who = firstName(app?.user, app?.settings?.displayName)
 
   useEffect(() => {
     const tab = NAV.find((n) => n.id === activeTab)
@@ -119,7 +121,10 @@ function Shell() {
               background: 'conic-gradient(from 210deg, var(--s1), var(--s3), var(--s4), var(--s2), var(--s1))',
             }}
           />
-          <span className="font-semibold text-[13.5px] tracking-tight">Life OS</span>
+          <span className="min-w-0">
+            <span className="font-semibold text-[13.5px] tracking-tight block leading-tight">Life OS</span>
+            {who && <span className="text-[11.5px] text-ink-3 block truncate">{who}</span>}
+          </span>
         </div>
         {NAV.map((n) => (
           <a

@@ -55,8 +55,12 @@ export function greeting(date = new Date(), name = null) {
   return name ? `${part}, ${name}` : part
 }
 
-/** first name only — "Good morning, Sohaib Ali" reads like a form letter */
-export function firstName(user) {
+/** First name only — "Good morning, Sohaib Ali" reads like a form letter.
+ *  A name typed in Settings wins over the account's, so the greeting works
+ *  whether or not you are signed in. */
+export function firstName(user, displayName = '') {
+  const typed = String(displayName || '').trim()
+  if (typed) return typed.split(/\s+/)[0]
   const full = user?.user_metadata?.full_name?.trim()
   if (full) return full.split(/\s+/)[0]
   const email = user?.email
