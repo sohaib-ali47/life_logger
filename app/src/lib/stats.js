@@ -350,6 +350,17 @@ export function nudges(sections, dayTotals, entries, now = new Date(), key = tod
     })
   }
 
+  /* ── close the day ──────────────────────────────────────────────── */
+  if (mins >= 21 * 60 && !ctx.dayClosed) {
+    out.push({
+      id: 'close',
+      kind: 'close',
+      text: 'Close the day when you are done',
+      detail: 'Closing turns today’s blanks into real zeros instead of missing data.',
+      action: { type: 'closeDay' },
+    })
+  }
+
   /* ── evening sweep ──────────────────────────────────────────────── */
   if (mins >= 20 * 60) {
     const short = sections.filter(

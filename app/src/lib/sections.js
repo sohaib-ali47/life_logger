@@ -122,11 +122,10 @@ export const DEFAULT_SECTIONS = [
   {
     id: 'nofap', name: 'No-fap', primitive: 'abstain', icon: 'shield',
     pillar: 'discipline', slot: 7, weight: 3,
-    /* Scoped and off until asked for: `audience` hides it entirely from
-       anyone it does not apply to, and `archived` keeps it off the Today
-       screen until you switch it on in Setup. */
+    /* Scoped, not hidden: `audience` keeps it out of Today *and* out of
+       Setup for anyone it does not apply to, so it is not something they
+       have to opt out of. For men it is on from the start. */
     audience: 'male',
-    archived: true,
     target: { period: 'streak', value: 30, dir: 'atLeast' },
     followUp: {
       when: 'reset',
@@ -180,7 +179,7 @@ export const DEFAULT_SECTIONS = [
 
   /* ── Work ───────────────────────────────────────────────────────── */
   {
-    id: 'work', name: 'Finance work', primitive: 'duration', icon: 'briefcase',
+    id: 'work', name: 'Trust-In work', primitive: 'duration', icon: 'briefcase',
     pillar: 'work', slot: 5, weight: 2, countsToDay: true,
     breakEvery: 50,
     target: { period: 'week', value: 2100, dir: 'atLeast' },
@@ -242,7 +241,7 @@ export const DEFAULT_SECTIONS = [
 
 /* Bump when the shipped defaults change shape. Boot then refreshes the
    built-in sections while leaving anything you created yourself alone. */
-export const SECTIONS_VERSION = 3
+export const SECTIONS_VERSION = 5
 
 export const DEFAULT_IDS = new Set(DEFAULT_SECTIONS.map((s) => s.id))
 

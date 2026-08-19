@@ -9,12 +9,15 @@ import SectionTile from '../components/SectionTile'
 import LogSheet from '../components/LogSheet'
 import { VariantSheet, VariantManagerSheet, FollowUpSheet, SessionSheet } from '../components/sheets'
 import NewTrackerSheet from '../components/NewTrackerSheet'
+import CheckInSheet from '../components/CheckInSheet'
 import { useApp } from '../lib/store'
 import { PILLARS } from '../lib/primitives'
 import * as notify from '../lib/notify'
+import { quoteFor, greeting, firstName } from '../lib/quotes'
+import { findGap, checkinId } from '../lib/checkin'
 import {
   today as todayKey, addDays, isFuture, fmtDay, relativeDay, localStamp,
-  minutesFromBoundary, clockOf, MIN_PER_DAY, pad,
+  minutesFromBoundary, clockOf, keyOf, stampFromDayMinutes, MIN_PER_DAY, pad,
 } from '../lib/dates'
 import {
   totalsByDay, dailyScore, accountedMinutes, nudges as buildNudges,
@@ -38,6 +41,7 @@ export default function Today({ dayKey, navigate }) {
   const [followUp, setFollowUp] = useState(null)           // { section, followUp, entryId, subtitle }
   const [sessionSheet, setSessionSheet] = useState(null)   // { section }
   const [dismissed, setDismissed] = useState(() => new Set())
+  const [checkIn, setCheckIn] = useState(false)
   const [now, setNow] = useState(Date.now())
 
   /* one clock for the whole screen — the timer and the nudge rules both
@@ -73,25 +77,48 @@ export default function Today({ dayKey, navigate }) {
   const score = useMemo(() => dailyScore(active, totals, entries, key), [active, totals, entries, key])
   const accounted = accountedMinutes(active, totals)
   const noHistory = entries.length === 0
+  /* true between midnight and the day boundary, when "today" is yesterday */
+  const beforeBoundary = isToday && key !== keyOf(new Date(now))
 
+  const dayClosed = app.isDayClosed(key)
   const nudges = useMemo(
     () =>
       isToday
         ? buildNudges(active, totals, entries, new Date(now), key, {
             timer: settings.timer,
             dayEntries,
+            dayClosed,
           }).filter((n) => !dismissed.has(n.id))
         : [],
-    [active, totals, entries, now, key, isToday, settings.timer, dayEntries, dismissed]
+    [active, totals, entries, now, key, isToday, settings.timer, dayEntries, dayClosed, dismissed]
   )
 
-  /* mirror the important nudges to the OS, once each */
+  /* mirror the actionable nudges to the OS, once each */
   useEffect(() => {
     for (const n of nudges) {
-      if (!['break', 'item', 'due', 'over'].includes(n.kind)) continue
+      if (!['break', 'item', 'due', 'over', 'close'].includes(n.kind)) continue
       if (notify.fire(n.id, n.text, n.detail || 'Life OS')) notify.buzz()
     }
   }, [nudges])
+
+  /* ── the hourly check-in ────────────────────────────────────────── */
+  const gap = useMemo(
+    () => findGap({ sections: active, dayEntries, now: new Date(now), timer: settings.timer, isToday }),
+    [active, dayEntries, now, settings.timer, isToday]
+  )
+
+  const gapId = gap ? checkinId(new Date(now), key) : null
+  const gapDismissed = gapId ? dismissed.has(gapId) : true
+
+  /* ask once per clock hour, and mirror it to the OS so it reaches you
+     even when the app is only in the background */
+  useEffect(() => {
+    if (!gap || !gapId || gapDismissed) return
+    const from = stampFromDayMinutes(key, gap.startMin).slice(11, 16)
+    if (notify.fire(gapId, 'What have you been doing?', `${fmtMinutes(gap.minutes)} unaccounted since ${from}`)) {
+      notify.buzz()
+    }
+  }, [gap, gapId, gapDismissed, key])
 
   const blocks = useMemo(() => {
     const out = []
@@ -202,6 +229,18 @@ export default function Today({ dayKey, navigate }) {
             {relativeDay(key) || fmtDay(key, 'dow')}
           </div>
           <h1 className="text-[21px] font-semibold tracking-tight">{fmtDay(key, 'full')}</h1>
+          {/* Before the boundary the logical day trails the calendar day.
+              Without saying so, this reads as a broken clock. */}
+          {beforeBoundary && (
+            <p className="text-[12px] text-ink-3 mt-1 leading-relaxed max-w-[46ch]">
+              It is {clockOf(localStamp(new Date(now)))} on {fmtDay(keyOf(new Date(now)), 'dow')}, but your day rolls
+              over at {pad(settings.dayBoundaryHour)}:00 — so a late night still counts as{' '}
+              {fmtDay(key, 'dow')}.{' '}
+              <button className="underline hover:text-ink" onClick={() => navigate('/setup')}>
+                Change it
+              </button>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <IconButton name="chevronLeft" label="Previous day" tone="bordered" onClick={() => navigate(`/today/${addDays(key, -1)}`)} />
@@ -284,6 +323,36 @@ export default function Today({ dayKey, navigate }) {
         </div>
       </Card>
       )}
+
+      {/* ── greeting + a line worth reading ────────────────────────── */}
+      {isToday && <WelcomeCard />}
+
+      {/* ── the hourly check-in ────────────────────────────────────── */}
+      {gap && !gapDismissed && (
+        <button
+          onClick={() => setCheckIn(true)}
+          className="w-full flex items-center gap-3 rounded-[14px] border px-3.5 py-3 mb-3.5 text-left transition-colors hover:bg-surface-3"
+          style={{ borderColor: 'color-mix(in oklab, var(--warning) 40%, var(--line))', background: 'color-mix(in oklab, var(--warning) 9%, var(--surface))' }}
+        >
+          <span
+            className="w-8 h-8 rounded-[10px] grid place-items-center shrink-0"
+            style={{ background: 'color-mix(in oklab, var(--warning) 20%, transparent)', color: 'var(--warning)' }}
+          >
+            <Icon name="clock" size={16} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-medium">What have you been doing?</span>
+            <span className="block text-[12px] text-ink-3 mt-0.5">
+              {fmtMinutes(gap.minutes)} unaccounted since {stampFromDayMinutes(key, gap.startMin).slice(11, 16)}
+              {gap.last ? ` · last logged ${gap.last.section.name}` : ''}
+            </span>
+          </span>
+          <Icon name="chevronRight" size={16} className="text-ink-3" />
+        </button>
+      )}
+
+      {/* ── notifications ──────────────────────────────────────────── */}
+      {isToday && <NotifyPrompt />}
 
       {/* ── nudges ─────────────────────────────────────────────────── */}
       {nudges.length > 0 && (
@@ -435,6 +504,19 @@ export default function Today({ dayKey, navigate }) {
       </Card>
 
       {/* ── sheets ─────────────────────────────────────────────────── */}
+      <CheckInSheet
+        open={checkIn}
+        gap={gap}
+        sections={active}
+        dayKey={key}
+        onClose={() => setCheckIn(false)}
+        onSkip={() => { if (gapId) setDismissed((d) => new Set(d).add(gapId)); setCheckIn(false) }}
+        onLog={({ section, minutes, at, meta }) => {
+          addEntry({ sectionId: section.id, date: key, value: minutes, at, meta })
+          app.flash(`${fmtMinutes(minutes)} logged to ${section.name}.`)
+        }}
+      />
+
       <LogSheet
         open={logSheet.open}
         onClose={() => setLogSheet({ open: false, sectionId: null })}
@@ -674,5 +756,111 @@ function TimerCard({ now, onBegin, onFollowUp }) {
         ))}
       </div>
     </Card>
+  )
+}
+
+/* Nudge the browser for notification permission, at the one moment it is
+ * worth asking: you are already on the screen the reminders belong to.
+ *
+ * On iPhone `Notification` does not exist at all until the app is on the
+ * Home Screen, so asking is impossible and the honest move is to say what
+ * to do instead of showing a dead button. */
+function NotifyPrompt() {
+  const { settings, setSetting, flash } = useApp()
+  const [state, setState] = useState(() => notify.status())
+  const [busy, setBusy] = useState(false)
+
+  if (settings.notifyPromptDismissed) return null
+  if (state.level === 'on' || state.level === 'unsupported' || state.level === 'denied') return null
+
+  const installHint = state.level === 'install'
+
+  const ask = async () => {
+    setBusy(true)
+    const granted = await notify.requestPermission()
+    setState(notify.status())
+    setBusy(false)
+    if (granted) {
+      notify.fire('welcome', 'Reminders are on', 'Break reminders, prayer times and water prompts will appear here.')
+      flash('Notifications on for this device.')
+    } else {
+      flash('Notifications stayed off. You can turn them on later in Setup.')
+    }
+  }
+
+  return (
+    <div
+      className="flex items-start gap-3 rounded-[14px] border border-line px-3.5 py-3 mb-3.5"
+      style={{ background: 'color-mix(in oklab, var(--accent) 8%, var(--surface))' }}
+    >
+      <span
+        className="w-8 h-8 rounded-[10px] grid place-items-center shrink-0"
+        style={{ background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)' }}
+      >
+        <Icon name="bell" size={16} />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium">
+          {installHint ? 'Add Life OS to your Home Screen' : 'Turn on reminders'}
+        </div>
+        <div className="text-[12px] text-ink-3 mt-0.5 leading-relaxed">
+          {installHint
+            ? 'iPhone only allows notifications once the app is installed. Tap Share, then Add to Home Screen, and open it from the icon.'
+            : 'Break reminders while a timer runs, prayer times, and water prompts — delivered while the app is open.'}
+        </div>
+        {!installHint && (
+          <Button size="sm" tone="primary" className="mt-2.5" onClick={ask} disabled={busy}>
+            {busy ? 'Asking…' : 'Allow notifications'}
+          </Button>
+        )}
+      </div>
+
+      <IconButton
+        name="x"
+        label="Dismiss"
+        size={30}
+        onClick={() => setSetting('notifyPromptDismissed', true)}
+      />
+    </div>
+  )
+}
+
+/* The greeting. Name, time-appropriate salutation, streak, and one line
+ * chosen by the date rather than at random — a quote that reshuffles on
+ * every tap is wallpaper, and after two days you stop reading it. */
+function WelcomeCard() {
+  const { user, settings, entries } = useApp()
+  const name = firstName(user)
+  const quote = quoteFor(todayKey())
+  const hello = greeting(new Date(), name)
+  const logged = entries.filter((e) => e.date === todayKey()).length
+
+  return (
+    <div
+      className="rounded-[18px] border border-line p-4 mb-3.5"
+      style={{ background: 'linear-gradient(135deg, color-mix(in oklab, var(--accent) 9%, var(--surface)), var(--surface) 70%)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[17px] font-semibold tracking-[-.015em]">{hello}</h2>
+          <p className="text-[12.5px] text-ink-3 mt-0.5">
+            {logged ? `${logged} logged today` : 'Nothing logged today yet'}
+            {settings.scoreGoal ? ` · aiming for ${settings.scoreGoal}` : ''}
+          </p>
+        </div>
+        <span
+          className="w-9 h-9 rounded-full grid place-items-center shrink-0 text-[13px] font-semibold"
+          style={{ background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)' }}
+        >
+          {(name || user?.email || 'Y').slice(0, 1).toUpperCase()}
+        </span>
+      </div>
+
+      <figure className="mt-3.5 pt-3.5 border-t border-line">
+        <blockquote className="text-[13.5px] leading-relaxed text-ink-2">“{quote.text}”</blockquote>
+        {quote.by && <figcaption className="text-[11.5px] text-ink-3 mt-1.5">— {quote.by}</figcaption>}
+      </figure>
+    </div>
   )
 }

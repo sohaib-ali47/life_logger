@@ -109,7 +109,7 @@ export function generate(days = 90) {
       })
     }
 
-    /* ── finance work ──────────────────────────────────────────── */
+    /* ── Trust-In work ──────────────────────────────────────────── */
     if (!weekend) add('work', key, (6.5 + r() * 2.6) * 60, 9, Math.floor(r() * 30))
     else if (r() < 0.18) add('work', key, (1 + r() * 2) * 60, 11, 0, { note: 'catch-up' })
 

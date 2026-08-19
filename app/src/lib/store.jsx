@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = {
   scoreGoal: 80,
   sectionsVersion: 0,
   autoSync: false,
+  notifyPromptDismissed: false,
   /* null until answered. Gating the preference screen on this — rather than
      on a "you have seen it" flag — is what makes it reappear next sign-in
      for anyone who never answered, and stay gone once they have. */

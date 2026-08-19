@@ -110,3 +110,16 @@ export const weekIndex = (key) => {
 }
 
 export const MIN_PER_DAY = 1440
+
+/** Inverse of minutesFromBoundary: a wall-clock stamp for N minutes into
+ *  the logical day. Rolls onto the next calendar date when the boundary
+ *  pushes past midnight, so a 01:30 slot on Monday's logical day is
+ *  stamped with Tuesday's calendar date — which is what actually happened. */
+export function stampFromDayMinutes(dayKey, minutes) {
+  const total = BOUNDARY * 60 + Math.max(0, Math.round(minutes))
+  let key = dayKey
+  let h = Math.floor(total / 60)
+  const m = total % 60
+  while (h >= 24) { h -= 24; key = addDays(key, 1) }
+  return `${key}T${pad(h)}:${pad(m)}:00`
+}
