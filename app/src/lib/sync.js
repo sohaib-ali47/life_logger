@@ -156,26 +156,54 @@ function shareable(settings) {
 
 /* ── transport ──────────────────────────────────────────────────────── */
 
-async function pullAll(table, userId, since) {
+/* A table that has not been created yet must not take the rest of sync
+   down with it. `plans` shipped after `entries`, so anyone who has not run
+   the newer migration would otherwise lose entry sync entirely — which is
+   exactly the failure this guard exists to prevent. */
+const MISSING_TABLE = new Set(['42P01', 'PGRST205', 'PGRST106'])
+export const isMissingTable = (err) =>
+  MISSING_TABLE.has(err?.code) ||
+  /does not exist|could not find the table|schema cache/i.test(err?.message ?? '')
+
+async function pullAll(table, userId, since, { optional = false } = {}) {
   const rows = []
   let from = 0
   for (;;) {
     let q = supabase.from(table).select('*').eq('user_id', userId).order('updated_at', { ascending: true })
     if (since) q = q.gt('updated_at', since)
     const { data, error } = await q.range(from, from + PAGE - 1)
-    if (error) throw error
+    if (error) {
+      if (optional && isMissingTable(error)) return { rows: [], missing: true }
+      throw error
+    }
     rows.push(...data)
     if (data.length < PAGE) break
     from += PAGE
   }
-  return rows
+  return { rows, missing: false }
 }
 
-async function pushAll(table, rows) {
+/* One malformed row used to fail its whole 500-row batch and abort the
+   run, so a single bad record could block every later write for good. Now
+   a failed batch is retried row by row: the good rows land, and the bad
+   ones are named instead of silently taking everything with them. */
+async function pushAll(table, rows, { optional = false } = {}) {
+  const failed = []
   for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await supabase.from(table).upsert(rows.slice(i, i + 500), { onConflict: 'user_id,id' })
-    if (error) throw error
+    const chunk = rows.slice(i, i + 500)
+    const { error } = await supabase.from(table).upsert(chunk, { onConflict: 'user_id,id' })
+    if (!error) continue
+    if (optional && isMissingTable(error)) return { pushed: 0, failed: [], missing: true }
+
+    for (const row of chunk) {
+      const one = await supabase.from(table).upsert([row], { onConflict: 'user_id,id' })
+      if (one.error) failed.push({ table, id: row.id, reason: one.error.message })
+    }
   }
+  if (failed.length) {
+    console.warn(`[sync] ${failed.length} ${table} row(s) rejected`, failed.slice(0, 5))
+  }
+  return { pushed: rows.length - failed.length, failed, missing: false }
 }
 
 /* ── the run ────────────────────────────────────────────────────────── */
@@ -185,14 +213,21 @@ export async function runSync({ userId, sections, entries, plans = [], settings,
 
   const since = cursor ? new Date(new Date(cursor).getTime() - OVERLAP_MS).toISOString() : null
 
-  /* 1 — pull what changed since we last looked */
-  const [remoteSectionRows, remoteEntryRows, remotePlanRows, settingsRes] = await Promise.all([
+  /* 1 — pull what changed since we last looked. `plans` is optional: it
+     shipped later than the rest, and a device whose project has not run
+     that migration must still sync its entries. */
+  const [secPull, entPull, planPull, settingsRes] = await Promise.all([
     pullAll('sections', userId, since),
     pullAll('entries', userId, since),
-    pullAll('plans', userId, since),
+    pullAll('plans', userId, since, { optional: true }),
     supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
   ])
   if (settingsRes.error) throw settingsRes.error
+
+  const remoteSectionRows = secPull.rows
+  const remoteEntryRows = entPull.rows
+  const remotePlanRows = planPull.rows
+  const plansMissing = planPull.missing
 
   const remoteSections = remoteSectionRows.map(rowToSection)
   const remoteEntries = remoteEntryRows.map(rowToEntry)
@@ -223,9 +258,24 @@ export async function runSync({ userId, sections, entries, plans = [], settings,
   const outEntries = outbound(e.merged, remoteEntries)
   const outPlans = outbound(pl.merged, remotePlans)
 
-  if (outSections.length) await pushAll('sections', outSections.map((x) => sectionToRow(x, userId)))
-  if (outEntries.length) await pushAll('entries', outEntries.map((x) => entryToRow(x, userId)))
-  if (outPlans.length) await pushAll('plans', outPlans.map((x) => planToRow(x, userId)))
+  const rejected = []
+  let pushed = 0
+
+  if (outSections.length) {
+    const r = await pushAll('sections', outSections.map((x) => sectionToRow(x, userId)))
+    pushed += r.pushed
+    rejected.push(...r.failed)
+  }
+  if (outEntries.length) {
+    const r = await pushAll('entries', outEntries.map((x) => entryToRow(x, userId)))
+    pushed += r.pushed
+    rejected.push(...r.failed)
+  }
+  if (outPlans.length && !plansMissing) {
+    const r = await pushAll('plans', outPlans.map((x) => planToRow(x, userId)), { optional: true })
+    pushed += r.pushed
+    rejected.push(...r.failed)
+  }
 
   if (!takeRemote) {
     const stamp = mergedSettings.settingsUpdatedAt ?? new Date().toISOString()
@@ -242,13 +292,17 @@ export async function runSync({ userId, sections, entries, plans = [], settings,
   ]
   const nextCursor = stamps.length ? stamps.reduce((a, b) => (a > b ? a : b)) : new Date().toISOString()
 
+  /* If anything was rejected, do NOT advance the cursor past it — the next
+     run must try those rows again rather than assume they landed. */
   return {
     sections: s.merged,
     entries: e.merged,
     plans: pl.merged,
     settings: mergedSettings,
-    cursor: nextCursor,
+    cursor: rejected.length ? cursor ?? null : nextCursor,
     pulled: s.adopted.length + e.adopted.length + pl.adopted.length,
-    pushed: outSections.length + outEntries.length + outPlans.length,
+    pushed,
+    rejected,
+    plansMissing,
   }
 }

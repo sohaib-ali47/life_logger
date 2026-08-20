@@ -22,7 +22,11 @@ const DEFAULT_SETTINGS = {
   weekStartsMonday: true,
   scoreGoal: 80,
   sectionsVersion: 0,
-  autoSync: false,
+  /* On by default. "I logged something, so it should be on the server" is
+     the only defensible expectation for a synced app — leaving it to a
+     button meant additions sat on one device indefinitely. The manual
+     Sync now button still exists for when you want it immediately. */
+  autoSync: true,
   notifyPromptDismissed: false,
   displayName: '',
   /* null until answered. Gating the preference screen on this — rather than
@@ -93,9 +97,49 @@ function bootOnce() {
       settingsDirty = true
     }
 
+    /* Background sync used to default off, which meant a logged entry could
+       sit on one device forever. Flip it on once for anyone carrying the
+       old default; a later deliberate change is respected. */
+    if (!s.autoSyncDefaulted) {
+      s.autoSync = true
+      s.autoSyncDefaulted = true
+      settingsDirty = true
+    }
+
+    /* Records created before the id fix carry a non-UUID key, which the
+       `uuid` columns reject — so they could never have reached the server.
+       Re-key them here. Nothing is lost: a row the server never accepted
+       has no remote copy to conflict with. */
+    let plansOut = savedPlans || []
+    const badEntries = ents.filter((e) => !db.isUuid(e.id))
+    const badPlans = plansOut.filter((p) => !db.isUuid(p.id))
+
+    if (badEntries.length || badPlans.length) {
+      if (badEntries.length) {
+        const fixed = badEntries.map((e) => ({ ...e, id: db.uid(), updatedAt: db.stamp() }))
+        const keepIds = new Set(badEntries.map((e) => e.id))
+        for (const e of badEntries) await db.del(db.STORES.entries, e.id)
+        await db.putMany(db.STORES.entries, fixed)
+        ents = [...ents.filter((e) => !keepIds.has(e.id)), ...fixed]
+      }
+      if (badPlans.length) {
+        const fixed = badPlans.map((p) => ({ ...p, id: db.uid(), updatedAt: db.stamp() }))
+        const keepIds = new Set(badPlans.map((p) => p.id))
+        for (const p of badPlans) await db.del(db.STORES.plans, p.id)
+        await db.putMany(db.STORES.plans, fixed)
+        plansOut = [...plansOut.filter((p) => !keepIds.has(p.id)), ...fixed]
+      }
+      /* they were never uploaded, so make the next run reconsider everything */
+      await db.setMeta('syncCursor', null)
+      console.info(
+        `[life-os] re-keyed ${badEntries.length} entr${badEntries.length === 1 ? 'y' : 'ies'}` +
+          `${badPlans.length ? ` and ${badPlans.length} plan(s)` : ''} that could not sync`
+      )
+    }
+
     if (settingsDirty) await db.setMeta('settings', s)
 
-    return { settings: s, sections: secs, entries: ents, plans: savedPlans || [] }
+    return { settings: s, sections: secs, entries: ents, plans: plansOut }
   })()
   return bootPromise
 }
@@ -230,8 +274,25 @@ export function AppProvider({ children }) {
       if (result.settings !== snapshot.settings) persistSettings(result.settings, { touch: false })
 
       const at = new Date().toISOString()
-      setSyncState({ status: 'ok', at, error: null })
-      if (!silent) {
+      const rejected = result.rejected ?? []
+
+      /* Report a partial success as a problem, not a success. A run that
+         silently drops rows is how data goes missing without anyone
+         noticing for a fortnight. */
+      setSyncState({
+        status: rejected.length ? 'partial' : 'ok',
+        at,
+        error: rejected.length
+          ? `${rejected.length} record${rejected.length === 1 ? '' : 's'} rejected — ${rejected[0].reason}`
+          : null,
+        plansMissing: !!result.plansMissing,
+        pushed: result.pushed,
+        pulled: result.pulled,
+      })
+
+      if (rejected.length) {
+        flashRef.current?.(`Synced, but ${rejected.length} record(s) were rejected. See Setup for the reason.`)
+      } else if (!silent) {
         flashRef.current?.(
           result.pulled || result.pushed
             ? `Synced — ${result.pushed} up, ${result.pulled} down.`

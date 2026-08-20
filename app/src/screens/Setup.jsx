@@ -334,9 +334,12 @@ function SyncCard() {
   const name = user.user_metadata?.full_name
   const statusText =
     syncState.status === 'syncing' ? 'Syncing…'
-      : syncState.status === 'error' ? syncState.error
-      : syncState.at ? `Last synced ${new Date(syncState.at).toLocaleString()}`
-      : 'Not synced yet'
+      : syncState.status === 'error' || syncState.status === 'partial' ? syncState.error
+      : syncState.at
+        ? `Last synced ${new Date(syncState.at).toLocaleString()}` +
+          (syncState.pushed ? ` · ${syncState.pushed} up, ${syncState.pulled} down` : '')
+        : 'Not synced yet'
+  const bad = syncState.status === 'error' || syncState.status === 'partial'
 
   return (
     <Card title="Account and sync" className="mb-3.5">
@@ -355,11 +358,12 @@ function SyncCard() {
               style={{
                 background:
                   syncState.status === 'error' ? 'var(--critical)'
+                    : syncState.status === 'partial' ? 'var(--warning)'
                     : syncState.status === 'syncing' ? 'var(--warning)'
                     : 'var(--good)',
               }}
             />
-            <span className={`text-[11.5px] truncate ${syncState.status === 'error' ? 'text-critical' : 'text-ink-3'}`}>
+            <span className={`text-[11.5px] truncate ${bad ? 'text-critical' : 'text-ink-3'}`}>
               {statusText}
             </span>
           </div>
@@ -387,6 +391,17 @@ function SyncCard() {
           </span>
         </label>
       </div>
+
+      {syncState.plansMissing && (
+        <p
+          className="text-[12px] mt-3.5 rounded-[10px] px-3 py-2.5 leading-relaxed"
+          style={{ background: 'color-mix(in oklab, var(--warning) 14%, transparent)' }}
+        >
+          <strong>Plans are not syncing.</strong> The <code>plans</code> table does not exist in your Supabase project
+          yet. Run <code>supabase/migrations/20260818000000_plans.sql</code> in the SQL editor. Everything else syncs
+          normally in the meantime.
+        </p>
+      )}
 
       <p className="text-[12px] text-ink-3 mt-3.5">
         Devices merge on the newest edit per record. Deletes replicate, so removing something on your phone does not
