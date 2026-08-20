@@ -123,3 +123,36 @@ export function stampFromDayMinutes(dayKey, minutes) {
   while (h >= 24) { h -= 24; key = addDays(key, 1) }
   return `${key}T${pad(h)}:${pad(m)}:00`
 }
+
+/** Split a timed block that runs past the day boundary into one segment
+ *  per logical day.
+ *
+ *  A sleep timer started at 23:00 does not belong to one day: most of it
+ *  happens after the 04:00 rollover. Logging the whole thing against the
+ *  start day both overstates that day and leaves the next morning looking
+ *  unaccounted for — which is why the check-in used to demand you explain
+ *  the hours you were asleep.
+ *
+ *  @returns [{ date, at, minutes }] — always at least one segment
+ */
+export function splitAcrossDays(dayKey, at, minutes) {
+  const total = Math.max(0, Math.round(minutes))
+  if (!at) return [{ date: dayKey, at, minutes: total }]
+
+  const out = []
+  let date = dayKey
+  let startMin = minutesFromBoundary(at)
+  let left = total
+  let guard = 0
+
+  while (left > 0 && guard++ < 14) {
+    const room = MIN_PER_DAY - startMin
+    const take = Math.min(left, room)
+    out.push({ date, at: stampFromDayMinutes(date, startMin), minutes: take })
+    left -= take
+    if (left <= 0) break
+    date = addDays(date, 1)
+    startMin = 0
+  }
+  return out.length ? out : [{ date: dayKey, at, minutes: total }]
+}

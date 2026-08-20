@@ -23,6 +23,7 @@ export const DEFAULT_SECTIONS = [
   },
   {
     id: 'eating', name: 'Eating', primitive: 'duration', icon: 'utensils',
+    remindEvery: 40, remindFrom: '08:00', remindUntil: '22:00',
     pillar: 'body', slot: 7, weight: 1, countsToDay: true,
     variantLabel: 'Which meal?',
     askOnStart: true,
@@ -39,6 +40,7 @@ export const DEFAULT_SECTIONS = [
   },
   {
     id: 'water', name: 'Water', primitive: 'count', unit: 'ml', icon: 'droplet',
+    remindEvery: 45, remindFrom: '08:00', remindUntil: '23:00',
     pillar: 'body', slot: 3, weight: 2,
     target: { period: 'day', value: 2500, dir: 'atLeast' },
     quick: [
@@ -51,12 +53,14 @@ export const DEFAULT_SECTIONS = [
   },
   {
     id: 'weight', name: 'Weight', primitive: 'measure', unit: 'kg', icon: 'scale',
+    remindEvery: 60, remindFrom: '07:00', remindUntil: '11:00',
     pillar: 'body', slot: 6, weight: 0,
     target: null,
     remind: ['07:30'],
   },
   {
     id: 'supplements', name: 'Supplements', primitive: 'checklist', icon: 'pill',
+    remindEvery: 45, remindFrom: '08:00', remindUntil: '13:00',
     pillar: 'body', slot: 8, weight: 1,
     variantLabel: 'What did you take?',
     variants: [
@@ -72,6 +76,7 @@ export const DEFAULT_SECTIONS = [
   /* ── Training ───────────────────────────────────────────────────── */
   {
     id: 'gym', name: 'Gym', primitive: 'session', icon: 'dumbbell',
+    remindEvery: 120, remindFrom: '16:00', remindUntil: '21:30',
     pillar: 'training', slot: 2, weight: 3, countsToDay: true,
     variantLabel: 'Which session?',
     askOnStart: true,
@@ -92,12 +97,14 @@ export const DEFAULT_SECTIONS = [
   },
   {
     id: 'pushups', name: 'Push-ups', primitive: 'count', unit: 'reps', icon: 'flame',
+    remindEvery: 120, remindFrom: '09:00', remindUntil: '22:00',
     pillar: 'training', slot: 5, weight: 2,
     target: { period: 'day', value: 100, dir: 'atLeast' },
     quick: [{ value: 10 }, { value: 20 }, { value: 25 }, { value: 50 }],
   },
   {
     id: 'pullups', name: 'Pull-ups', primitive: 'count', unit: 'reps', icon: 'chevronUp',
+    remindEvery: 180, remindFrom: '10:00', remindUntil: '22:00',
     pillar: 'training', slot: 7, weight: 1,
     target: { period: 'day', value: 30, dir: 'atLeast' },
     quick: [{ value: 5 }, { value: 8 }, { value: 10 }, { value: 15 }],
@@ -106,6 +113,7 @@ export const DEFAULT_SECTIONS = [
   /* ── Faith ──────────────────────────────────────────────────────── */
   {
     id: 'namaz', name: 'Namaz', primitive: 'checklist', icon: 'lotus',
+    remindEvery: 20, remindFrom: '05:00', remindUntil: '23:30',
     pillar: 'faith', slot: 3, weight: 3,
     variantLabel: 'Which prayer?',
     variants: [
@@ -137,6 +145,7 @@ export const DEFAULT_SECTIONS = [
   },
   {
     id: 'wakeup', name: 'Up by 07:00', primitive: 'check', icon: 'alarm',
+    remindEvery: 15, remindFrom: '07:00', remindUntil: '09:30',
     pillar: 'discipline', slot: 2, weight: 2,
     target: { period: 'day', value: 1, dir: 'atLeast' },
     followUp: { when: 'miss', field: 'delayMin', label: 'How late were you?', type: 'number', unit: 'min' },
@@ -146,6 +155,7 @@ export const DEFAULT_SECTIONS = [
   /* ── Mind ───────────────────────────────────────────────────────── */
   {
     id: 'study', name: 'Skills', primitive: 'duration', icon: 'book',
+    remindEvery: 120, remindFrom: '18:00', remindUntil: '23:00',
     pillar: 'mind', slot: 3, weight: 3, countsToDay: true,
     variantLabel: 'Which skill?',
     askOnStart: true,
@@ -162,6 +172,7 @@ export const DEFAULT_SECTIONS = [
   },
   {
     id: 'meditation', name: 'Meditation', primitive: 'check', icon: 'sparkle',
+    remindEvery: 40, remindFrom: '21:00', remindUntil: '23:30',
     pillar: 'mind', slot: 6, weight: 1,
     target: { period: 'day', value: 1, dir: 'atLeast' },
     remind: ['21:30'],
@@ -241,7 +252,7 @@ export const DEFAULT_SECTIONS = [
 
 /* Bump when the shipped defaults change shape. Boot then refreshes the
    built-in sections while leaving anything you created yourself alone. */
-export const SECTIONS_VERSION = 5
+export const SECTIONS_VERSION = 6
 
 export const DEFAULT_IDS = new Set(DEFAULT_SECTIONS.map((s) => s.id))
 
@@ -250,6 +261,9 @@ export function withDefaults(section, index = 0) {
     unit: '',
     quick: [],
     remind: [],
+    remindEvery: null,      /* minutes between repeats; null = ask once */
+    remindFrom: null,
+    remindUntil: null,
     variants: [],
     weight: 1,
     archived: false,

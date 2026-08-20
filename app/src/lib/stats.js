@@ -298,23 +298,109 @@ export function nudges(sections, dayTotals, entries, now = new Date(), key = tod
     })
   }
 
+  /* When a reminder was last silenced, in minutes-from-boundary. Snoozing
+     moves the anchor forward; it does not cancel the reminder. */
+  const snoozeMin = (repeatKey) => {
+    const iso = ctx.snoozed?.[repeatKey]
+    if (!iso) return -1
+    const until = new Date(iso).getTime()
+    if (!Number.isFinite(until) || until <= now.getTime()) return -1
+    const d = new Date(until)
+    return (((d.getHours() - (ctx.boundaryHour ?? 4)) + 24) % 24) * 60 + d.getMinutes()
+  }
+
+  /* the last time you actually did the thing today */
+  const lastLogMin = (sectionId) => {
+    let latest = -1
+    for (const e of dayEntries) {
+      if (e.sectionId !== sectionId || !e.at || e.deletedAt) continue
+      const m = (((Number(e.at.slice(11, 13)) - (ctx.boundaryHour ?? 4)) + 24) % 24) * 60 + Number(e.at.slice(14, 16))
+      if (m > latest) latest = m
+    }
+    return latest
+  }
+
+  const hhmmToMin = (v, fallback) => {
+    const [h, m] = String(v ?? '').split(':').map(Number)
+    if (!Number.isFinite(h)) return fallback
+    return (((h - (ctx.boundaryHour ?? 4)) + 24) % 24) * 60 + (m || 0)
+  }
+
   for (const s of sections) {
     if (s.archived) continue
     const value = dayTotals?.[s.id] ?? 0
     const target = targetForDays(s, 1)
     const met = target ? meetsTarget(s, value, 1) : false
 
+    /* ── the repeating reminder: an alarm, not a hint ──────────────
+       It re-fires every `remindEvery` minutes until the target is met.
+       Logging resets the clock; snoozing pushes it out; ignoring it
+       changes nothing except that the wording gets firmer. */
+    if (s.remindEvery && target && !met && s.primitive !== 'abstain') {
+      const from = hhmmToMin(s.remindFrom ?? (s.remind || [])[0] ?? '08:00', 4 * 60)
+      const until = hhmmToMin(s.remindUntil ?? '23:00', 19 * 60)
+      const nowMin = ctx.nowDayMin ?? mins
+
+      if (nowMin >= from && nowMin <= until) {
+        const key = `rep:${s.id}`
+        const anchor = Math.max(from, lastLogMin(s.id), snoozeMin(key))
+        const elapsed = nowMin - anchor
+        if (elapsed >= s.remindEvery) {
+          const cycle = Math.floor(elapsed / s.remindEvery)
+          const pressing = cycle >= 3
+          const short = target - value
+          out.push({
+            id: `${key}:${anchor}:${cycle}`,
+            snoozeKey: key,
+            sectionId: s.id,
+            kind: 'due',
+            repeating: true,
+            cycle,
+            text: pressing
+              ? `Still no ${s.name.toLowerCase()} — ${cycle} reminders ignored`
+              : s.primitive === 'check'
+                ? `${s.name} — still not done`
+                : `Time for ${s.name.toLowerCase()}`,
+            detail:
+              target && s.primitive !== 'check'
+                ? `${Math.round(value)} of ${Math.round(target)} today · ${Math.round(short)} to go`
+                : `Asked ${cycle === 1 ? 'once' : `${cycle} times`} since ${
+                    String(Math.floor(((anchor + (ctx.boundaryHour ?? 4) * 60) % 1440) / 60)).padStart(2, '0')
+                  }:${String(anchor % 60).padStart(2, '0')}`,
+            action:
+              s.primitive === 'check'
+                ? { type: 'tick', sectionId: s.id }
+                : (s.quick || []).length
+                  ? { type: 'quick', sectionId: s.id }
+                  : null,
+          })
+        }
+      }
+    }
+
     /* ── checklist items with their own time ──────────────────────── */
     if (s.primitive === 'checklist') {
       const done = doneVariants(dayEntries.filter((e) => e.sectionId === s.id))
       for (const v of s.variants || []) {
         if (!v.time || done.has(v.id) || !dueNow(v.time, 180)) continue
+        /* re-ask on the section's own interval, so a missed prayer or a
+           forgotten supplement keeps surfacing instead of scrolling away */
+        const key = `item:${s.id}:${v.id}`
+        const every = s.remindEvery ?? 30
+        const due = hhmmToMin(v.time, 0)
+        const anchor = Math.max(due, snoozeMin(key))
+        const elapsed = (ctx.nowDayMin ?? mins) - anchor
+        const cycle = Math.max(0, Math.floor(elapsed / every))
+        if (elapsed < 0) continue
         out.push({
-          id: `item:${s.id}:${v.id}`,
+          id: `${key}:${cycle}`,
+          snoozeKey: key,
           sectionId: s.id,
           variantId: v.id,
           kind: 'item',
-          text: `${v.name} — not logged yet`,
+          repeating: true,
+          cycle,
+          text: cycle >= 2 ? `${v.name} still not logged` : `${v.name} — not logged yet`,
           detail: `${s.name} · due ${v.time}`,
           action: { type: 'tick', sectionId: s.id, variantId: v.id },
         })

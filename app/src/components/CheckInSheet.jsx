@@ -37,6 +37,11 @@ export default function CheckInSheet({ open, gap, sections, dayKey, onLog, onClo
   const startClock = startStamp.slice(11, 16)
   const endClock = endStamp.slice(11, 16)
   const timed = sections.filter((s) => s.countsToDay)
+  const sleep = sections.find((s) => s.id === 'sleep')
+  /* A gap that begins at or near the day boundary is almost always the
+     night. Demanding an explanation for the hours you were unconscious is
+     the fastest way to make someone stop answering these. */
+  const looksLikeNight = gap.startMin <= 60 && sleep
   const lastSection = gap.last?.section ?? null
 
   /* minutes from the gap start to whatever "stopped" time was typed */
@@ -77,6 +82,29 @@ export default function CheckInSheet({ open, gap, sections, dayKey, onLog, onClo
         is unaccounted — {fmtMinutes(gap.minutes)}.
         {gap.capped && ' Only the last six hours are offered; earlier than that, add it by hand.'}
       </div>
+
+      {/* the night, offered first when the gap starts at the boundary */}
+      {looksLikeNight && !picking && (
+        <button
+          onClick={() => log(sleep, gap.minutes)}
+          className="flex items-center gap-3 p-3.5 rounded-[13px] border text-left transition-colors hover:bg-surface-3"
+          style={{ borderColor: slotVar(sleep), background: `color-mix(in oklab, ${slotVar(sleep)} 10%, transparent)` }}
+        >
+          <span
+            className="w-9 h-9 rounded-[11px] grid place-items-center shrink-0"
+            style={{ background: `color-mix(in oklab, ${slotVar(sleep)} 20%, transparent)`, color: slotVar(sleep) }}
+          >
+            <Icon name="moon" size={17} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[14px] font-medium">I was asleep</span>
+            <span className="block text-[12px] text-ink-3 mt-0.5">
+              Logs {fmtMinutes(gap.minutes)} of sleep from {startClock}
+            </span>
+          </span>
+          <Icon name="chevronRight" size={16} className="ml-auto text-ink-3" />
+        </button>
+      )}
 
       {/* still on the last thing */}
       {lastSection && !picking && (

@@ -12,6 +12,7 @@ import {
   dailyScore, insights as buildInsights, deltaOf,
 } from '../lib/stats'
 import { fmtValue } from '../lib/format'
+import Achievements from '../components/Achievements'
 
 export default function Review({ navigate }) {
   const { active, entries, idx } = useApp()
@@ -93,6 +94,8 @@ export default function Review({ navigate }) {
         <Stat label="Behind" value={String(behind.length)} />
         <Stat label="Notes written" value={String(notes.length)} />
       </div>
+
+      <Achievements />
 
       {/* ── findings ───────────────────────────────────────────────── */}
       <Card

@@ -9,7 +9,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import * as db from './db'
 import { seedSections, withDefaults, SECTIONS_VERSION, DEFAULT_IDS, suitsAudience } from './sections'
-import { configure, today, dayKeyFor, localStamp } from './dates'
+import { configure, today, dayKeyFor, localStamp, splitAcrossDays } from './dates'
 import { indexEntries, totalsByDay } from './stats'
 import {
   isConfigured, currentSession, onAuthChange, consumeAuthRedirect, signOut as authSignOut,
@@ -31,6 +31,8 @@ const DEFAULT_SETTINGS = {
   sex: null,          /* 'male' | 'female' | 'unspecified' — scopes sections */
   timer: null,
   closedDays: [],
+  snoozed: {},
+  badgesSeen: null,   /* null = never evaluated on this device */
 }
 
 const Ctx = createContext(null)
@@ -303,11 +305,11 @@ export function AppProvider({ children }) {
   /* ── entry actions ────────────────────────────────────────────── */
   const addEntry = useCallback((patch) => {
     const section = sections.find((s) => s.id === patch.sectionId)
-    const rec = db.newEntry(patch)
 
-    setEntries((prev) => {
-      /* one-a-day primitives overwrite rather than accumulate */
-      if (section && ['scale', 'measure', 'check'].includes(section.primitive)) {
+    /* one-a-day primitives overwrite rather than accumulate */
+    if (section && ['scale', 'measure'].includes(section.primitive)) {
+      const rec = db.newEntry(patch)
+      setEntries((prev) => {
         const existing = prev.find(
           (e) => e.sectionId === rec.sectionId && e.date === rec.date && !e.deletedAt
         )
@@ -316,11 +318,35 @@ export function AppProvider({ children }) {
           db.put(db.STORES.entries, updated).catch(() => {})
           return prev.map((e) => (e.id === existing.id ? updated : e))
         }
-      }
-      db.put(db.STORES.entries, rec).catch(() => {})
-      return [...prev, rec]
-    })
-    return rec
+        db.put(db.STORES.entries, rec).catch(() => {})
+        return [...prev, rec]
+      })
+      return rec
+    }
+
+    /* A block of time that runs past the day boundary is two facts, not
+       one: five hours of Tuesday's sleep and two and a half of
+       Wednesday's. Splitting it here means every day's total is right and
+       the morning is not left looking unaccounted for. */
+    const timed = section && ['duration', 'session'].includes(section.primitive)
+    const segments = timed && patch.at
+      ? splitAcrossDays(patch.date, patch.at, patch.value)
+      : [{ date: patch.date, at: patch.at ?? null, minutes: patch.value }]
+
+    const group = segments.length > 1 ? db.uid() : null
+    const records = segments.map((seg, i) =>
+      db.newEntry({
+        ...patch,
+        date: seg.date,
+        at: seg.at,
+        value: seg.minutes,
+        meta: group ? { ...(patch.meta || {}), span: group, spanPart: i + 1, spanOf: segments.length } : patch.meta,
+      })
+    )
+
+    records.forEach((r) => db.put(db.STORES.entries, r).catch(() => {}))
+    setEntries((prev) => [...prev, ...records])
+    return records[0]
   }, [sections])
 
   const updateEntry = useCallback((id, patch) => {
@@ -422,6 +448,20 @@ export function AppProvider({ children }) {
     })
     return { rec, minutes, timer: t }
   }, [settings, timers, persistSettings, addEntry])
+
+  /* ── snooze ───────────────────────────────────────────────────── */
+
+  /* Snoozing moves a reminder's anchor forward; it never cancels it. The
+     only thing that stops a reminder is doing the thing. */
+  const snooze = useCallback((key, minutes = 10) => {
+    const until = new Date(Date.now() + minutes * 60000).toISOString()
+    const now = Date.now()
+    const kept = Object.fromEntries(
+      Object.entries(snapshotRef.current.settings.snoozed ?? {})
+        .filter(([, iso]) => new Date(iso).getTime() > now)
+    )
+    persistSettings({ ...snapshotRef.current.settings, snoozed: { ...kept, [key]: until } })
+  }, [persistSettings])
 
   /* ── plans: what you said you would do ────────────────────────── */
   const addPlan = useCallback((patch) => {
@@ -610,7 +650,7 @@ export function AppProvider({ children }) {
   const value = {
     ready, settings, sections, visible, active, entries: live, allEntries: entries, idx, toast,
     plans: livePlans, allPlans: plans,
-    addPlan, updatePlan, deletePlan,
+    addPlan, updatePlan, deletePlan, snooze,
     timers,
     bootstrapping,
     setSetting: (k, v) => persistSettings({ ...settings, [k]: v }),

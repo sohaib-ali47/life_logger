@@ -6,6 +6,7 @@ import Icon from './Icon'
 import { Chip, Ring, IconButton, Button, slotVar } from './ui'
 import { splitValue, fmtQuick, quickHint, quickValue, fmtValue } from '../lib/format'
 import { dailyTarget, attainment, meetsTarget } from '../lib/stats'
+import { artFor, artPath } from '../lib/artwork'
 
 export default function SectionTile({
   section, value, abstain, doneItems, onQuick, onCustom, onOpen, onReset,
@@ -33,15 +34,31 @@ export default function SectionTile({
           ? 'anything worth recording'
           : 'no target'
 
+  const art = artFor(section)
+
   return (
     <div
-      className="bg-surface border rounded-[18px] p-3.5 grid gap-3 transition-colors"
+      className="relative overflow-hidden bg-surface border rounded-[18px] p-3.5 grid gap-3 transition-colors"
       style={{
         '--tint': tint,
         borderColor: hit && !over && section.target ? `color-mix(in oklab, ${tint} 42%, var(--line))` : 'var(--line)',
       }}
     >
-      <div className="flex items-center gap-2.5">
+      {/* Generated backdrop, derived from this section's id — so a tracker
+          you invent a minute from now gets its own artwork too, with
+          nothing to download and nothing that can go missing. */}
+      <div aria-hidden="true" className="absolute inset-0 pointer-events-none" style={{ background: art.css }} />
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="absolute inset-0 w-full h-full pointer-events-none"
+        style={{ opacity: 0.14 }}
+      >
+        <path d={artPath(art.pattern, art.seed)} fill="none" stroke={tint} strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+
+      <div className="relative flex items-center gap-2.5">
         <span
           className="w-8 h-8 rounded-[10px] grid place-items-center shrink-0"
           style={{ background: `color-mix(in oklab, ${tint} 16%, transparent)`, color: tint }}
@@ -65,7 +82,7 @@ export default function SectionTile({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="relative flex items-center gap-3">
         <div className="flex items-baseline gap-1">
           <span className="text-[23px] font-semibold tracking-tight leading-none">{text}</span>
           {unit && <span className="text-[12px] text-ink-3">{unit}</span>}
@@ -75,6 +92,7 @@ export default function SectionTile({
         </div>
       </div>
 
+      <div className="relative">
       <Control
         section={section}
         value={value}
@@ -91,6 +109,7 @@ export default function SectionTile({
         onStartTimer={onStartTimer}
         onManageOptions={onManageOptions}
       />
+      </div>
     </div>
   )
 }

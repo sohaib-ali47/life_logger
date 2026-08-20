@@ -89,11 +89,13 @@ export default function Today({ dayKey, navigate }) {
             plans: plans.filter((p) => p.date === key),
             dayEntries,
             dayClosed,
+            snoozed: settings.snoozed,
+            boundaryHour: settings.dayBoundaryHour,
             nowDayMin: minutesFromBoundary(localStamp(new Date(now))),
             planClock: (m) => stampFromDayMinutes(key, m).slice(11, 16),
           }).filter((n) => !dismissed.has(n.id))
         : [],
-    [active, totals, entries, now, key, isToday, timers, plans, dayEntries, dayClosed, dismissed]
+    [active, totals, entries, now, key, isToday, timers, plans, dayEntries, dayClosed, dismissed, settings.snoozed, settings.dayBoundaryHour]
   )
 
   /* mirror the actionable nudges to the OS, once each */
@@ -634,7 +636,7 @@ function Figure({ label, value, unit }) {
   )
 }
 
-function NudgeCard({ nudge, section, onDismiss, onTick, onStart, onAnswer, onQuick }) {
+function NudgeCard({ nudge, section, onDismiss, onSnooze, onTick, onStart, onAnswer, onQuick }) {
   const [value, setValue] = useState('')
   const tint = section ? slotVar(section) : 'var(--warning)'
   const icon =
@@ -691,7 +693,26 @@ function NudgeCard({ nudge, section, onDismiss, onTick, onStart, onAnswer, onQui
         <Chip tint={tint} onClick={() => onQuick(section)}>Log</Chip>
       )}
 
-      <IconButton name="x" label="Dismiss" size={28} onClick={onDismiss} />
+      {/* A repeating reminder gets snooze rather than dismiss: the point is
+          that it comes back. Dismiss only hides this one firing. */}
+      {nudge.snoozeKey && onSnooze ? (
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            className="h-7 px-2 rounded-[8px] text-[11.5px] font-medium text-ink-3 hover:text-ink hover:bg-surface-3"
+            onClick={() => onSnooze(10)}
+          >
+            10m
+          </button>
+          <button
+            className="h-7 px-2 rounded-[8px] text-[11.5px] font-medium text-ink-3 hover:text-ink hover:bg-surface-3"
+            onClick={() => onSnooze(30)}
+          >
+            30m
+          </button>
+        </div>
+      ) : (
+        <IconButton name="x" label="Dismiss" size={28} onClick={onDismiss} />
+      )}
     </div>
   )
 }
